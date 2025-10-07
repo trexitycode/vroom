@@ -527,6 +527,16 @@ void Input::set_skills_compatibility() {
 
       for (std::size_t j = 0; j < jobs.size(); ++j) {
         bool is_compatible = true;
+        // If job specifies allowed vehicles, restrict to those ids
+        if (!jobs[j].allowed_vehicles.empty()) {
+          const auto v_id = vehicles[v].id;
+          is_compatible = std::ranges::find(jobs[j].allowed_vehicles, v_id) !=
+                          jobs[j].allowed_vehicles.end();
+        }
+        if (!is_compatible) {
+          _vehicle_to_job_compatibility[v][j] = false;
+          continue;
+        }
         for (const auto& s : jobs[j].skills) {
           if (!v_skills.contains(s)) {
             is_compatible = false;
@@ -1238,6 +1248,23 @@ Solution Input::solve(const unsigned nb_searches,
     std::chrono::duration_cast<std::chrono::milliseconds>(_end_solving -
                                                           _end_loading)
       .count();
+
+  // Enforce required tasks: fail if any required job remains unassigned.
+  if (!sol.unassigned.empty()) {
+    // Build a set of unassigned ids for quick lookup
+    std::unordered_set<Id> unassigned_ids;
+    unassigned_ids.reserve(sol.unassigned.size());
+    for (const auto& j : sol.unassigned) {
+      unassigned_ids.insert(j.id);
+    }
+
+    for (const auto& j : jobs) {
+      if (j.required && unassigned_ids.contains(j.id)) {
+        throw InputException(std::format(
+          "Required task {} could not be assigned.", j.id));
+      }
+    }
+  }
 
   if (_geometry) {
     for (auto& route : sol.routes) {

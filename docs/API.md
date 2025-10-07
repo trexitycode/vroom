@@ -70,6 +70,9 @@ A `job` object has the following properties:
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
 | [`time_windows`] | an array of `time_window` objects describing valid slots for job service start |
+| [`required`] | boolean, when `true` the task must be assigned or the solver errors |
+| [`required_vehicle`] | vehicle id to restrict eligibility to a single vehicle |
+| [`allowed_vehicles`] | array of vehicle ids eligible for this task |
 
 An error is reported if two `job` objects have the same `id`.
 
@@ -84,6 +87,9 @@ A `shipment` object has the following properties:
 | [`amount`] | an array of integers describing multidimensional quantities |
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
+| [`required`] | boolean, when `true` both pickup and delivery must be assigned or the solver errors |
+| [`required_vehicle`] | vehicle id to restrict eligibility to a single vehicle for both steps |
+| [`allowed_vehicles`] | array of vehicle ids eligible for both steps |
 
 A `shipment_step` is similar to a `job` object (expect for shared keys already present in `shipment`):
 
@@ -223,6 +229,12 @@ This definition implies in particular that:
 
 In order to ease modeling problems with no skills required, not
 providing a `skills` key default to providing an empty array.
+
+### Required tasks and vehicle locking
+
+Use `required: true` to enforce hard inclusion of a task in the solution. If a required task cannot be assigned feasibly, an input error is raised.
+
+Use `required_vehicle` or `allowed_vehicles` on a task to restrict eligibility to specific vehicles. This works in addition to skills and other feasibility checks. Combining `required: true` with `required_vehicle` enforces that the task must be assigned to that vehicle or the solver errors.
 
 ### Task priorities
 

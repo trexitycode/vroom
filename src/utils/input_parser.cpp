@@ -48,6 +48,34 @@ inline double get_double(const rapidjson::Value& object, const char* key) {
   return value;
 }
 
+inline bool get_bool(const rapidjson::Value& object, const char* key) {
+  bool value = false;
+  if (object.HasMember(key)) {
+    if (!object[key].IsBool()) {
+      throw InputException("Invalid " + std::string(key) + " value.");
+    }
+    value = object[key].GetBool();
+  }
+  return value;
+}
+
+inline std::vector<Id>
+get_id_array(const rapidjson::Value& object, const char* key) {
+  std::vector<Id> ids;
+  if (object.HasMember(key)) {
+    if (!object[key].IsArray()) {
+      throw InputException("Invalid " + std::string(key) + " array.");
+    }
+    for (rapidjson::SizeType i = 0; i < object[key].Size(); ++i) {
+      if (!object[key][i].IsUint64()) {
+        throw InputException("Invalid id value in " + std::string(key) + ".");
+      }
+      ids.push_back(object[key][i].GetUint64());
+    }
+  }
+  return ids;
+}
+
 inline Amount get_amount(const rapidjson::Value& object,
                          const char* key,
                          unsigned amount_size) {
@@ -500,6 +528,16 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
                                   !json_job.HasMember("delivery") &&
                                   !json_job.HasMember("pickup");
 
+  // Required assignment constraints (optional)
+  const bool required = get_bool(json_job, "required");
+  auto allowed_vehicles = get_id_array(json_job, "allowed_vehicles");
+  if (json_job.HasMember("required_vehicle")) {
+    if (!json_job["required_vehicle"].IsUint64()) {
+      throw InputException("Invalid required_vehicle value.");
+    }
+    allowed_vehicles.push_back(json_job["required_vehicle"].GetUint64());
+  }
+
   return Job(json_job["id"].GetUint64(),
              get_task_location(json_job, "job"),
              get_duration(json_job, "setup"),
@@ -512,7 +550,9 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_time_windows(json_job, "job"),
              get_string(json_job, "description"),
              get_duration_per_type(json_job, "setup_per_type", "job"),
-             get_duration_per_type(json_job, "service_per_type", "job"));
+             get_duration_per_type(json_job, "service_per_type", "job"),
+             required,
+             allowed_vehicles);
 }
 
 template <class T> inline Matrix<T> get_matrix(rapidjson::Value& m) {
@@ -606,6 +646,14 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
       auto amount = get_amount(json_shipment, "amount", amount_size);
       auto skills = get_skills(json_shipment);
       auto priority = get_priority(json_shipment);
+      const bool required = get_bool(json_shipment, "required");
+      auto allowed_vehicles = get_id_array(json_shipment, "allowed_vehicles");
+      if (json_shipment.HasMember("required_vehicle")) {
+        if (!json_shipment["required_vehicle"].IsUint64()) {
+          throw InputException("Invalid required_vehicle value.");
+        }
+        allowed_vehicles.push_back(json_shipment["required_vehicle"].GetUint64());
+      }
 
       // Defining pickup job.
       auto& json_pickup = json_shipment["pickup"];
@@ -626,7 +674,9 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                                              "pickup"),
                        get_duration_per_type(json_pickup,
                                              "service_per_type",
-                                             "pickup"));
+                                             "pickup"),
+                       required,
+                       allowed_vehicles);
 
       // Defining delivery job.
       auto& json_delivery = json_shipment["delivery"];
@@ -647,7 +697,9 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                                                "delivery"),
                          get_duration_per_type(json_delivery,
                                                "service_per_type",
-                                               "delivery"));
+                                               "delivery"),
+                         required,
+                         allowed_vehicles);
 
       input.add_shipment(pickup, delivery);
     }

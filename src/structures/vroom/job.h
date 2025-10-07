@@ -33,6 +33,10 @@ struct Job {
   const std::string description;
   const TypeToDurationMap setup_per_type;
   const TypeToDurationMap service_per_type;
+  // Optional hard-constraint flags/filters
+  bool required{false};
+  // If non-empty, only these vehicle ids are eligible for this job/shipment step
+  std::vector<Id> allowed_vehicles;
   std::vector<Duration> setups;
   std::vector<Duration> services;
 
@@ -49,7 +53,9 @@ struct Job {
         std::vector<TimeWindow>(1, TimeWindow()),
       std::string description = "",
       const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
-      const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap());
+      const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
+      bool required = false,
+      const std::vector<Id>& allowed_vehicles = std::vector<Id>());
 
   // Constructor for pickup and delivery jobs (JOB_TYPE::PICKUP or
   // JOB_TYPE::DELIVERY).
@@ -65,7 +71,9 @@ struct Job {
         std::vector<TimeWindow>(1, TimeWindow()),
       std::string description = "",
       const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
-      const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap());
+      const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
+      bool required = false,
+      const std::vector<Id>& allowed_vehicles = std::vector<Id>());
 
   Index index() const {
     return location.index();
