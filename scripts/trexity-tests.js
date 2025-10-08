@@ -66,6 +66,14 @@ function matrix3_200() {
   return { car: { durations: [[0, 200, 200], [200, 0, 200], [200, 200, 0]] } };
 }
 
+// Skewed 3x3 matrix to make the optimal order Start -> Job2 -> Job1
+// cheaper than Start -> Job1 -> Job2.
+function matrix3_skewed() {
+  // indices: 0=start, 1=job1, 2=job2
+  // 0->2 and 2->1 are cheap; 0->1 is very expensive, so solver should place job2 before job1
+  return { car: { durations: [[0, 1000, 100], [1000, 0, 100], [100, 100, 0]] } };
+}
+
 function assertExit(exp, got) {
   if (exp !== got) throw new Error(`Expected exit ${exp}, got ${got}`);
 }
@@ -322,6 +330,108 @@ const tests = {
   }
 };
 
+// ---------------- Additional Edge Case Tests ----------------
+Object.assign(tests, {
+  async pinned_job_reorder_with_added_task_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true },
+        { id: 2, location_index: 2 }
+      ],
+      matrices: matrix3_skewed()
+    };
+    const f = writeJSON(t, 'pinned_job_reorder_with_added_task_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.routes.length', 1);
+    assertJsonEq(json, '.routes.0.vehicle', 101);
+    // Expect the solver to reorder due to strong skew: Job2 before Job1
+    const steps = json.routes[0].steps;
+    const jobSteps = steps.filter(s => s.type === 'job');
+    if (jobSteps.length < 2) throw new Error('Expected 2 job steps in route');
+    if (jobSteps[0].id !== 2 || jobSteps[1].id !== 1) {
+      throw new Error(`Expected order [2,1], got [${jobSteps.map(s => s.id)}]`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_two_jobs_same_vehicle_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [
+        { id: 101, start_index: 0, steps: [ { type: 'start' }, { type: 'job', id: 1 }, { type: 'job', id: 2 }, { type: 'end' } ] },
+        { id: 102, start_index: 0 }
+      ],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true },
+        { id: 2, location_index: 2, pinned: true }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_two_jobs_same_vehicle_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.routes.length', 1);
+    assertJsonEq(json, '.routes.0.vehicle', 101);
+    const steps = json.routes[0].steps;
+    const jobIds = steps.filter(s => s.type === 'job').map(s => s.id).sort((a,b)=>a-b);
+    if (String(jobIds) !== String([1,2])) {
+      throw new Error(`Expected job steps [1,2] on vehicle 101, got [${jobIds}]`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_shipment_partial_steps_err() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, capacity: [1], steps: [
+        { type: 'start' }, { type: 'pickup', id: 9001 }, { type: 'end' }
+      ] }],
+      shipments: [{ amount: [1], pinned: true,
+        pickup: { id: 9001, location_index: 0 },
+        delivery: { id: 9002, location_index: 1 }
+      }],
+      matrices: matrix2_500()
+    };
+    const f = writeJSON(t, 'pinned_shipment_partial_steps_err.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_job_plus_unpinned_assigned_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true },
+        { id: 2, location_index: 2 }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_job_plus_unpinned_assigned_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.routes.length', 1);
+    assertJsonEq(json, '.routes.0.vehicle', 101);
+    const steps = json.routes[0].steps;
+    const jobIds = steps.filter(s => s.type === 'job').map(s => s.id).sort((a,b)=>a-b);
+    if (String(jobIds) !== String([1,2])) {
+      throw new Error(`Expected both jobs [1,2] on vehicle 101, got [${jobIds}]`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  }
+});
+
 async function main() {
   const order = [
     'job_allowed_unassigned',
@@ -339,7 +449,12 @@ async function main() {
     'pinned_job_allowed_conflict_err',
     'pinned_shipment_same_vehicle',
     'pinned_shipment_split_err',
-    'pinned_infeasible_capacity_err'
+    'pinned_infeasible_capacity_err',
+    // Additional edge cases
+    'pinned_job_reorder_with_added_task_success',
+    'pinned_two_jobs_same_vehicle_success',
+    'pinned_shipment_partial_steps_err',
+    'pinned_job_plus_unpinned_assigned_success'
   ];
 
   let pass = 0, fail = 0;
