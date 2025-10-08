@@ -74,6 +74,13 @@ function matrix3_skewed() {
   return { car: { durations: [[0, 1000, 100], [1000, 0, 100], [100, 100, 0]] } };
 }
 
+// Make job2 clearly cheaper (lower travel cost) while both single-job routes are feasible
+// indices: 0=start, 1=job1, 2=job2
+// 0->1=300, 0->2=100, 2->1=200, 1->2=200
+function matrix3_cheaper_job2() {
+  return { car: { durations: [[0, 300, 100], [300, 0, 200], [100, 200, 0]] } };
+}
+
 function assertExit(exp, got) {
   if (exp !== got) throw new Error(`Expected exit ${exp}, got ${got}`);
 }
@@ -360,6 +367,53 @@ Object.assign(tests, {
     fs.rmSync(t, { recursive: true, force: true });
   },
 
+  async pinned_vs_unpinned_cheaper_selection() {
+    const t = tmpDir();
+    // Two vehicles, one job. Steps seed job 1 on vehicle 101.
+    // Matrix favors vehicle 102 -> job (much cheaper). Only difference between runs is pinned flag.
+    const base = {
+      vehicles: [
+        { id: 101, start_index: 0, steps: [ { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' } ] },
+        { id: 102, start_index: 1 }
+      ],
+      jobs: [ { id: 1, location_index: 2 } ],
+      matrices: {
+        car: {
+          durations: [
+            // 0 (v101 start)  1 (v102 start)  2 (job)
+            [ 0,               0,              1000 ],
+            [ 0,               0,              100  ],
+            [ 1000,           100,              0   ]
+          ]
+        }
+      }
+    };
+
+    // With pinned=true, job must remain on vehicle 101 as seeded
+    const withPinned = JSON.parse(JSON.stringify(base));
+    withPinned.jobs[0].pinned = true;
+    const f1 = writeJSON(t, 'pinned_vs_unpinned_1.json', withPinned);
+    const r1 = runVroom(f1);
+    assertExit(0, r1.code);
+    // Find the route containing job 1
+    const routeJob1Pinned = r1.json.routes.find(rt => rt.steps.some(s => s.type === 'job' && s.id === 1));
+    if (!routeJob1Pinned || routeJob1Pinned.vehicle !== 101) {
+      throw new Error(`Pinned run: expected job 1 on vehicle 101, got ${routeJob1Pinned && routeJob1Pinned.vehicle}`);
+    }
+
+    // With pinned=false, optimizer should migrate job 1 to cheaper vehicle 102
+    const withoutPinned = JSON.parse(JSON.stringify(base));
+    withoutPinned.jobs[0].pinned = false;
+    const f2 = writeJSON(t, 'pinned_vs_unpinned_2.json', withoutPinned);
+    const r2 = runVroom(f2);
+    assertExit(0, r2.code);
+    const routeJob1Unpinned = r2.json.routes.find(rt => rt.steps.some(s => s.type === 'job' && s.id === 1));
+    if (!routeJob1Unpinned || routeJob1Unpinned.vehicle !== 102) {
+      throw new Error(`Unpinned run: expected job 1 on vehicle 102, got ${routeJob1Unpinned && routeJob1Unpinned.vehicle}`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
   async pinned_two_jobs_same_vehicle_success() {
     const t = tmpDir();
     const input = {
@@ -454,7 +508,8 @@ async function main() {
     'pinned_job_reorder_with_added_task_success',
     'pinned_two_jobs_same_vehicle_success',
     'pinned_shipment_partial_steps_err',
-    'pinned_job_plus_unpinned_assigned_success'
+    'pinned_job_plus_unpinned_assigned_success',
+    'pinned_vs_unpinned_cheaper_selection'
   ];
 
   let pass = 0, fail = 0;
