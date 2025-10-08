@@ -116,6 +116,13 @@ void MixedExchange::compute_gain() {
 bool MixedExchange::is_valid() {
   assert(_gain_upper_bound_computed);
 
+  // Quick guard: avoid cross-vehicle move of pinned jobs
+  if (_input.job_is_pinned(s_route[s_rank]) ||
+      _input.job_is_pinned(t_route[t_rank]) ||
+      _input.job_is_pinned(t_route[t_rank + 1])) {
+    return false;
+  }
+
   bool valid =
     is_valid_for_target_range_bounds() &&
     target.is_valid_addition_for_capacity_margins(_input,

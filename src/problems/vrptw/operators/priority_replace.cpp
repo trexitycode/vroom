@@ -35,6 +35,18 @@ PriorityReplace::PriorityReplace(const Input& input,
 }
 
 bool PriorityReplace::is_valid() {
+  // Forbid if any removed segment job would be pinned
+  for (Index r = 0; r <= s_rank; ++r) {
+    if (_input.job_is_pinned(s_route[r])) {
+      return false;
+    }
+  }
+  for (Index r = t_rank; r < s_route.size(); ++r) {
+    if (_input.job_is_pinned(s_route[r])) {
+      return false;
+    }
+  }
+
   bool valid = cvrp::PriorityReplace::is_valid();
 
   if (valid) {

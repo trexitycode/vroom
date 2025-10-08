@@ -61,6 +61,10 @@ void Relocate::compute_gain() {
 
 bool Relocate::is_valid() {
   assert(gain_computed);
+  // Do not relocate pinned jobs across vehicles
+  if (_input.job_is_pinned(s_route[s_rank])) {
+    return false;
+  }
   return is_valid_for_source_range_bounds() &&
          is_valid_for_target_range_bounds() &&
          target

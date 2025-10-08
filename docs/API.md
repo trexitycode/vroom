@@ -70,8 +70,7 @@ A `job` object has the following properties:
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
 | [`time_windows`] | an array of `time_window` objects describing valid slots for job service start |
-| [`required`] | boolean, when `true` the task must be assigned or the solver errors |
-| [`required_vehicle`] | vehicle id to restrict eligibility to a single vehicle |
+| [`pinned`] | boolean. Defaults to false. When true, this task must be listed in exactly one `vehicle.steps` entry in solving mode, and will remain on that vehicle throughout optimization (may be reordered within that vehicle only). If infeasible, the solve fails with a clear error. |
 | [`allowed_vehicles`] | array of vehicle ids eligible for this task |
 
 An error is reported if two `job` objects have the same `id`.
@@ -87,8 +86,7 @@ A `shipment` object has the following properties:
 | [`amount`] | an array of integers describing multidimensional quantities |
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
-| [`required`] | boolean, when `true` both pickup and delivery must be assigned or the solver errors |
-| [`required_vehicle`] | vehicle id to restrict eligibility to a single vehicle for both steps |
+| [`pinned`] | boolean. Applies to the whole shipment (both pickup and delivery). If `true`, both shipment steps must be present under the same `vehicle.steps` entry. |
 | [`allowed_vehicles`] | array of vehicle ids eligible for both steps |
 
 A `shipment_step` is similar to a `job` object (expect for shared keys already present in `shipment`):
@@ -287,32 +285,11 @@ key might be included at any time in any route, to the extent
 permitted by other constraints such as skills, capacity and other
 vehicles/tasks time windows.
 
-### Vehicle `steps`
+### Vehicles steps
+When using solving mode seeding, `vehicles.steps` can be used to seed the driver's current route. When a job or shipment is marked `pinned: true`, the `steps` placement determines the vehicle to which that task is pinned. Pinned tasks must appear exactly once in exactly one vehicle's `steps`, and cannot migrate to another vehicle or be dropped. Reordering within the vehicle is allowed.
 
-#### In plan mode
-
-The `steps` array describes exactly the route ordering that will be
-generated in response. The (optional) `service_*` keys for
-`vehicle_step` objects are used as additional hard timing constraints.
-
-#### In solving mode
-
-Using `steps` for vehicles in default VRP solving mode is a way to
-force starting the search from the matching user-defined solution, if
-valid. Unlike the default solving behavior of running several
-concurrent searches, this means in particular that a single search
-path is followed, starting from the provided solution. Resulting
-quality is thus obviously expected to be highly dependent on the
-user-defined starting point.
-
-In that context:
-- only steps with `type=job`, `pickup` or `delivery` are used to
-  decide initial routes ordering
-- `service_*` keys are not used
-
-An error is raised if for any of the vehicles the provided `steps`
-describe a route that is invalid with regard to any of the
-constraints.
+### Notes
+For must-stay-with-driver behavior in solving mode, use `pinned: true` and include the task in that driver's `vehicle.steps`. For soft preferences, combine `allowed_vehicles` with `priority`.
 
 ## Matrices
 

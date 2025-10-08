@@ -528,15 +528,9 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
                                   !json_job.HasMember("delivery") &&
                                   !json_job.HasMember("pickup");
 
-  // Required assignment constraints (optional)
-  const bool required = get_bool(json_job, "required");
+  // New hard-constraint: pinned semantics (optional)
+  const bool pinned = get_bool(json_job, "pinned");
   auto allowed_vehicles = get_id_array(json_job, "allowed_vehicles");
-  if (json_job.HasMember("required_vehicle")) {
-    if (!json_job["required_vehicle"].IsUint64()) {
-      throw InputException("Invalid required_vehicle value.");
-    }
-    allowed_vehicles.push_back(json_job["required_vehicle"].GetUint64());
-  }
 
   return Job(json_job["id"].GetUint64(),
              get_task_location(json_job, "job"),
@@ -551,7 +545,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_string(json_job, "description"),
              get_duration_per_type(json_job, "setup_per_type", "job"),
              get_duration_per_type(json_job, "service_per_type", "job"),
-             required,
+             pinned,
              allowed_vehicles);
 }
 
@@ -646,14 +640,8 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
       auto amount = get_amount(json_shipment, "amount", amount_size);
       auto skills = get_skills(json_shipment);
       auto priority = get_priority(json_shipment);
-      const bool required = get_bool(json_shipment, "required");
+      const bool pinned = get_bool(json_shipment, "pinned");
       auto allowed_vehicles = get_id_array(json_shipment, "allowed_vehicles");
-      if (json_shipment.HasMember("required_vehicle")) {
-        if (!json_shipment["required_vehicle"].IsUint64()) {
-          throw InputException("Invalid required_vehicle value.");
-        }
-        allowed_vehicles.push_back(json_shipment["required_vehicle"].GetUint64());
-      }
 
       // Defining pickup job.
       auto& json_pickup = json_shipment["pickup"];
@@ -675,7 +663,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                        get_duration_per_type(json_pickup,
                                              "service_per_type",
                                              "pickup"),
-                       required,
+                       pinned,
                        allowed_vehicles);
 
       // Defining delivery job.
@@ -698,7 +686,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                          get_duration_per_type(json_delivery,
                                                "service_per_type",
                                                "delivery"),
-                         required,
+                         pinned,
                          allowed_vehicles);
 
       input.add_shipment(pickup, delivery);

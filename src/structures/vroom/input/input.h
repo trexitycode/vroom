@@ -74,6 +74,8 @@ private:
   std::unordered_set<Location> _locations_used_several_times;
   std::vector<std::vector<unsigned char>> _vehicle_to_job_compatibility;
   std::vector<std::vector<bool>> _vehicle_to_vehicle_compatibility;
+  // For pinned semantics: if set, job j must stay on pinned vehicle
+  std::vector<std::optional<Index>> _pinned_vehicle_by_job;
   std::unordered_set<Index> _matrices_used_index;
   Index _max_matrices_used_index{0};
   bool _all_locations_have_coords{true};
@@ -198,6 +200,19 @@ public:
 
   bool vehicle_ok_with_job(size_t v_index, size_t j_index) const {
     return static_cast<bool>(_vehicle_to_job_compatibility[v_index][j_index]);
+  }
+
+  // Pinned helpers
+  bool job_is_pinned(Index job_rank) const {
+    return _pinned_vehicle_by_job.size() > job_rank &&
+           _pinned_vehicle_by_job[job_rank].has_value();
+  }
+
+  std::optional<Index> pinned_vehicle(Index job_rank) const {
+    if (_pinned_vehicle_by_job.size() <= job_rank) {
+      return std::nullopt;
+    }
+    return _pinned_vehicle_by_job[job_rank];
   }
 
   // Returns true iff both vehicles have common job candidates.

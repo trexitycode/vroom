@@ -151,6 +151,14 @@ void CrossExchange::compute_gain() {
 bool CrossExchange::is_valid() {
   assert(_gain_upper_bound_computed);
 
+  // Quick guard: do not move pinned jobs across vehicles
+  if (_input.job_is_pinned(s_route[s_rank]) ||
+      _input.job_is_pinned(s_route[s_rank + 1]) ||
+      _input.job_is_pinned(t_route[t_rank]) ||
+      _input.job_is_pinned(t_route[t_rank + 1])) {
+    return false;
+  }
+
   auto target_pickup = _input.jobs[t_route[t_rank]].pickup +
                        _input.jobs[t_route[t_rank + 1]].pickup;
 

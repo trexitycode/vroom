@@ -91,6 +91,18 @@ void PriorityReplace::compute_gain() {
 }
 
 bool PriorityReplace::is_valid() {
+  // Forbid replacing if any removed segment job would be pinned
+  for (Index r = 0; r <= s_rank; ++r) {
+    if (_input.job_is_pinned(s_route[r])) {
+      return false;
+    }
+  }
+  for (Index r = t_rank; r < s_route.size(); ++r) {
+    if (_input.job_is_pinned(s_route[r])) {
+      return false;
+    }
+  }
+
   const auto& j = _input.jobs[_u];
 
   // Early abort if priority gain is not interesting anyway or the

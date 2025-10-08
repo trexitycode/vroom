@@ -79,6 +79,11 @@ void UnassignedExchange::compute_gain() {
 }
 
 bool UnassignedExchange::is_valid() {
+  // Forbid removing a pinned job to unassigned
+  if (_input.job_is_pinned(_removed)) {
+    return false;
+  }
+
   auto pickup = source.pickup_in_range(_first_rank, _last_rank);
   assert(_input.jobs[_removed].pickup <= pickup);
   pickup -= _input.jobs[_removed].pickup;

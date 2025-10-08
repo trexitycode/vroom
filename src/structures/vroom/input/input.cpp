@@ -517,34 +517,47 @@ UserCost Input::check_cost_bound(const Matrix<UserCost>& matrix) const {
 }
 
 void Input::set_skills_compatibility() {
-  // Default to no restriction when no skills are provided.
+  // Start with all compatible, then apply filters.
   _vehicle_to_job_compatibility = std::vector<
     std::vector<unsigned char>>(vehicles.size(),
                                 std::vector<unsigned char>(jobs.size(), true));
-  if (_has_skills) {
-    for (std::size_t v = 0; v < vehicles.size(); ++v) {
-      const auto& v_skills = vehicles[v].skills;
 
-      for (std::size_t j = 0; j < jobs.size(); ++j) {
-        bool is_compatible = true;
-        // If job specifies allowed vehicles, restrict to those ids
-        if (!jobs[j].allowed_vehicles.empty()) {
-          const auto v_id = vehicles[v].id;
-          is_compatible = std::ranges::find(jobs[j].allowed_vehicles, v_id) !=
-                          jobs[j].allowed_vehicles.end();
-        }
-        if (!is_compatible) {
-          _vehicle_to_job_compatibility[v][j] = false;
-          continue;
-        }
+  // Ensure pinned vector sized
+  _pinned_vehicle_by_job.resize(jobs.size());
+
+  for (std::size_t v = 0; v < vehicles.size(); ++v) {
+    const auto& v_skills = vehicles[v].skills;
+
+    for (std::size_t j = 0; j < jobs.size(); ++j) {
+      bool is_compatible = true;
+
+      // 1) Pinned filter: if job pinned to a specific vehicle, only allow that one
+      if (_pinned_vehicle_by_job[j].has_value()) {
+        is_compatible = (v == _pinned_vehicle_by_job[j].value());
+      }
+
+      // 2) allowed_vehicles filter regardless of _has_skills.
+      if (is_compatible && !jobs[j].allowed_vehicles.empty()) {
+        const auto v_id = vehicles[v].id;
+        is_compatible = std::ranges::find(jobs[j].allowed_vehicles, v_id) !=
+                        jobs[j].allowed_vehicles.end();
+      }
+      if (!is_compatible) {
+        _vehicle_to_job_compatibility[v][j] = false;
+        continue;
+      }
+
+      // 3) skills inclusion.
+      if (is_compatible && _has_skills) {
         for (const auto& s : jobs[j].skills) {
           if (!v_skills.contains(s)) {
             is_compatible = false;
             break;
           }
         }
-        _vehicle_to_job_compatibility[v][j] = is_compatible;
       }
+
+      _vehicle_to_job_compatibility[v][j] = is_compatible;
     }
   }
 }
@@ -855,11 +868,20 @@ void Input::set_jobs_durations_per_vehicle_type() {
 }
 
 void Input::set_vehicle_steps_ranks() {
+  // Ensure pinned vector is sized before we record pinned vehicles
+  if (_pinned_vehicle_by_job.size() != jobs.size()) {
+    _pinned_vehicle_by_job = std::vector<std::optional<Index>>(jobs.size());
+  }
+
   std::unordered_set<Id> planned_job_ids;
   std::unordered_set<Id> planned_pickup_ids;
   std::unordered_set<Id> planned_delivery_ids;
 
+  // Track pinned presence: each pinned job must be present exactly once in exactly one vehicle
+  std::vector<unsigned> pinned_appearances(jobs.size(), 0);
+
   for (auto& current_vehicle : vehicles) {
+    const Index v_rank = &current_vehicle - &vehicles[0];
     for (auto& step : current_vehicle.steps) {
       if (step.type == STEP_TYPE::BREAK) {
         auto search = current_vehicle.break_id_to_rank.find(step.id);
@@ -892,6 +914,17 @@ void Input::set_vehicle_steps_ranks() {
                           current_vehicle.id));
           }
           planned_job_ids.insert(step.id);
+
+          // If pinned flag on this job, record pinned vehicle
+          if (jobs[step.rank].pinned) {
+            ++pinned_appearances[step.rank];
+            if (_pinned_vehicle_by_job[step.rank].has_value() &&
+                _pinned_vehicle_by_job[step.rank].value() != v_rank) {
+              throw InputException(std::format(
+                "Pinned task {} appears in multiple vehicle.steps.", step.id));
+            }
+            _pinned_vehicle_by_job[step.rank] = v_rank;
+          }
           break;
         }
         case JOB_TYPE::PICKUP: {
@@ -912,6 +945,16 @@ void Input::set_vehicle_steps_ranks() {
                        current_vehicle.id));
           }
           planned_pickup_ids.insert(step.id);
+
+          if (jobs[step.rank].pinned) {
+            ++pinned_appearances[step.rank];
+            if (_pinned_vehicle_by_job[step.rank].has_value() &&
+                _pinned_vehicle_by_job[step.rank].value() != v_rank) {
+              throw InputException(std::format(
+                "Pinned shipment pickup {} appears in multiple vehicle.steps.", step.id));
+            }
+            _pinned_vehicle_by_job[step.rank] = v_rank;
+          }
           break;
         }
         case JOB_TYPE::DELIVERY: {
@@ -932,9 +975,69 @@ void Input::set_vehicle_steps_ranks() {
                           current_vehicle.id));
           }
           planned_delivery_ids.insert(step.id);
+
+          if (jobs[step.rank].pinned) {
+            ++pinned_appearances[step.rank];
+            if (_pinned_vehicle_by_job[step.rank].has_value() &&
+                _pinned_vehicle_by_job[step.rank].value() != v_rank) {
+              throw InputException(std::format(
+                "Pinned shipment delivery {} appears in multiple vehicle.steps.", step.id));
+            }
+            _pinned_vehicle_by_job[step.rank] = v_rank;
+          }
           break;
         }
         }
+      }
+    }
+  }
+
+  // Validate pinned presence and shipment steps on same vehicle
+  for (Index j = 0; j < jobs.size(); ++j) {
+    if (!jobs[j].pinned) {
+      continue;
+    }
+    if (!pinned_appearances[j]) {
+      const auto& job = jobs[j];
+      const auto type_str = (job.type == JOB_TYPE::SINGLE)
+                              ? "job"
+                              : (job.type == JOB_TYPE::PICKUP ? "pickup"
+                                                              : "delivery");
+      throw InputException(std::format(
+        "Pinned task {} ({} ) must be included in exactly one vehicle.steps.",
+        job.id,
+        type_str));
+    }
+    if (pinned_appearances[j] > 1) {
+      const auto& job = jobs[j];
+      throw InputException(std::format(
+        "Pinned task {} appears multiple times in vehicle.steps.", job.id));
+    }
+
+    // For shipments, ensure pickup and delivery are pinned to same vehicle
+    if (jobs[j].type == JOB_TYPE::PICKUP) {
+      const Index d = j + 1;
+      if (!jobs[d].pinned ||
+          !_pinned_vehicle_by_job[j].has_value() ||
+          !_pinned_vehicle_by_job[d].has_value() ||
+          _pinned_vehicle_by_job[j].value() != _pinned_vehicle_by_job[d].value()) {
+        throw InputException(std::format(
+          "Pinned shipment steps {} and {} must be under the same vehicle steps.",
+          jobs[j].id,
+          jobs[d].id));
+      }
+    }
+
+    // Check allowed_vehicles conflict: pinned vehicle must be eligible
+    if (!jobs[j].allowed_vehicles.empty()) {
+      const auto pinned_v = _pinned_vehicle_by_job[j].value();
+      const auto pinned_v_id = vehicles[pinned_v].id;
+      if (std::ranges::find(jobs[j].allowed_vehicles, pinned_v_id) ==
+          jobs[j].allowed_vehicles.end()) {
+        throw InputException(std::format(
+          "Pinned task {} conflicts with allowed_vehicles (vehicle {}).",
+          jobs[j].id,
+          pinned_v_id));
       }
     }
   }
@@ -1200,6 +1303,20 @@ Solution Input::solve(const unsigned nb_searches,
                       const std::vector<HeuristicParameters>& h_param) {
   run_basic_checks();
 
+  // Pinned tasks require solving mode with vehicle.steps
+  bool has_pinned = std::ranges::any_of(jobs, [](const Job& j) {
+    return j.pinned;
+  });
+  if (has_pinned && !_has_initial_routes) {
+    const auto it = std::ranges::find_if(jobs, [](const Job& j) {
+      return j.pinned;
+    });
+    assert(it != jobs.end());
+    throw InputException(std::format(
+      "Pinned task {} must be included in exactly one vehicle.steps.",
+      it->id));
+  }
+
   if (_has_initial_routes) {
     set_vehicle_steps_ranks();
   }
@@ -1213,6 +1330,18 @@ Solution Input::solve(const unsigned nb_searches,
   set_skills_compatibility();
   set_extra_compatibility();
   set_vehicles_compatibility();
+
+  // Fail-fast: pinned tasks must be compatible (capacity/TW) with their pinned vehicle
+  if (!_pinned_vehicle_by_job.empty()) {
+    for (Index j = 0; j < jobs.size(); ++j) {
+      if (_pinned_vehicle_by_job[j].has_value() &&
+          !_vehicle_to_job_compatibility[_pinned_vehicle_by_job[j].value()][j]) {
+        const auto v_id = vehicles[_pinned_vehicle_by_job[j].value()].id;
+        throw InputException(std::format(
+          "Pinned task {} infeasible on vehicle {}.", jobs[j].id, v_id));
+      }
+    }
+  }
 
   set_jobs_vehicles_evals();
 
@@ -1249,19 +1378,29 @@ Solution Input::solve(const unsigned nb_searches,
                                                           _end_loading)
       .count();
 
-  // Enforce required tasks: fail if any required job remains unassigned.
-  if (!sol.unassigned.empty()) {
-    // Build a set of unassigned ids for quick lookup
-    std::unordered_set<Id> unassigned_ids;
-    unassigned_ids.reserve(sol.unassigned.size());
-    for (const auto& j : sol.unassigned) {
-      unassigned_ids.insert(j.id);
+  // Post-solve verification: pinned tasks must still be on their pinned vehicle
+  if (!_pinned_vehicle_by_job.empty()) {
+    // Build assigned vehicle map: job id -> vehicle id in solution
+    std::unordered_map<Id, Id> job_to_vehicle_id;
+    for (const auto& route : sol.routes) {
+      for (const auto& step : route.steps) {
+        if (step.step_type == STEP_TYPE::JOB) {
+          job_to_vehicle_id[step.id] = route.vehicle;
+        }
+      }
     }
 
-    for (const auto& j : jobs) {
-      if (j.required && unassigned_ids.contains(j.id)) {
+    for (Index j = 0; j < jobs.size(); ++j) {
+      if (!_pinned_vehicle_by_job[j].has_value()) {
+        continue;
+      }
+      const auto pinned_v_rank = _pinned_vehicle_by_job[j].value();
+      const auto expected_v_id = vehicles[pinned_v_rank].id;
+      const auto& job = jobs[j];
+      auto it = job_to_vehicle_id.find(job.id);
+      if (it == job_to_vehicle_id.end() || it->second != expected_v_id) {
         throw InputException(std::format(
-          "Required task {} could not be assigned.", j.id));
+          "Pinned task {} not assigned to pinned vehicle {}.", job.id, expected_v_id));
       }
     }
   }

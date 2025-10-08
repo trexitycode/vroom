@@ -231,6 +231,14 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
     }
     const auto& v = input.vehicles[i];
 
+    // Skip routes containing any job incompatible with the vehicle.
+    const bool all_compatible = std::ranges::all_of(
+      route, [&](Index j_rank) { return input.vehicle_ok_with_job(i, j_rank); });
+    if (!all_compatible) {
+      // Leave those jobs in unassigned_ranks.
+      continue;
+    }
+
     assert(route.size() <= v.max_tasks);
 
     auto previous_location = (v.has_start())
@@ -879,20 +887,6 @@ Solution format_solution(const Input& input, const TWSolution& tw_routes) {
   }
 
   auto unassigned = get_unassigned_jobs_from_ranks(input, unassigned_ranks);
-  // Enforce required tasks in plan mode
-  if (!unassigned.empty()) {
-    std::unordered_set<Id> unassigned_ids;
-    unassigned_ids.reserve(unassigned.size());
-    for (const auto& j : unassigned) {
-      unassigned_ids.insert(j.id);
-    }
-    for (const auto& j : input.jobs) {
-      if (j.required && unassigned_ids.contains(j.id)) {
-        throw InputException(
-          std::format("Required task {} could not be assigned.", j.id));
-      }
-    }
-  }
 
   return Solution(input.zero_amount(), std::move(routes), std::move(unassigned));
 }

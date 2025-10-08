@@ -24,7 +24,7 @@ Job::Job(Id id,
          std::string description,
          const TypeToUserDurationMap& setup_per_type,
          const TypeToUserDurationMap& service_per_type,
-         bool required,
+         bool pinned,
          const std::vector<Id>& allowed_vehicles)
   : location(location),
     id(id),
@@ -39,7 +39,7 @@ Job::Job(Id id,
     description(std::move(description)),
     setup_per_type(utils::scale_from_user_duration(setup_per_type)),
     service_per_type(utils::scale_from_user_duration(service_per_type)),
-    required(required),
+    pinned(pinned),
     allowed_vehicles(allowed_vehicles) {
   utils::check_tws(tws, id, "job");
   utils::check_priority(priority, id, "job");
@@ -62,7 +62,7 @@ Job::Job(Id id,
          std::string description,
          const TypeToUserDurationMap& setup_per_type,
          const TypeToUserDurationMap& service_per_type,
-         bool required,
+         bool pinned,
          const std::vector<Id>& allowed_vehicles)
   : location(location),
     id(id),
@@ -77,7 +77,7 @@ Job::Job(Id id,
     description(std::move(description)),
     setup_per_type(utils::scale_from_user_duration(setup_per_type)),
     service_per_type(utils::scale_from_user_duration(service_per_type)),
-    required(required),
+    pinned(pinned),
     allowed_vehicles(allowed_vehicles) {
   assert(type == JOB_TYPE::PICKUP || type == JOB_TYPE::DELIVERY);
   std::string type_str = (type == JOB_TYPE::PICKUP) ? "pickup" : "delivery";
