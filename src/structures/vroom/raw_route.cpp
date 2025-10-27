@@ -211,6 +211,106 @@ bool RawRoute::is_valid_addition_for_capacity_inclusion(
   assert(first_rank <= last_rank);
   assert(last_rank <= route.size() + 1);
 
+  // Enforce pinned first/last boundary constraints regardless of capacity
+  const auto v = v_rank;
+  const auto insert_len = static_cast<unsigned>(std::distance(first_job, last_job));
+
+  if (const auto pf = input.pinned_first_for_vehicle(v); pf.has_value()) {
+    const auto& req = pf.value();
+    if (req.job_rank.has_value()) {
+      if (first_rank == 0) {
+        Index new_first;
+        if (insert_len > 0) {
+          new_first = *first_job;
+        } else {
+          if (last_rank < route.size()) {
+            new_first = route[last_rank];
+          } else {
+            return false;
+          }
+        }
+        if (new_first != req.job_rank.value()) {
+          return false;
+        }
+      }
+    } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+      if (first_rank == 0) {
+        std::optional<Index> n0;
+        std::optional<Index> n1;
+        if (insert_len >= 2) {
+          auto it = first_job;
+          n0 = *it;
+          ++it;
+          n1 = *it;
+        } else if (insert_len == 1) {
+          n0 = *first_job;
+          if (last_rank < route.size()) {
+            n1 = route[last_rank];
+          }
+        } else {
+          if (last_rank < route.size()) {
+            n0 = route[last_rank];
+          }
+          if (last_rank + 1 < route.size()) {
+            n1 = route[last_rank + 1];
+          }
+        }
+        if (!n0.has_value() || !n1.has_value() ||
+            n0.value() != req.pickup_rank.value() ||
+            n1.value() != req.delivery_rank.value()) {
+          return false;
+        }
+      }
+      if (first_rank == 1 && insert_len > 0) {
+        if (route.size() >= 2 && route[0] == req.pickup_rank.value() &&
+            route[1] == req.delivery_rank.value()) {
+          return false;
+        }
+      }
+    }
+  }
+
+  if (const auto pl = input.pinned_last_for_vehicle(v); pl.has_value()) {
+    const auto& req = pl.value();
+    if (req.job_rank.has_value()) {
+      if (last_rank == route.size()) {
+        std::optional<Index> new_last;
+        if (insert_len > 0) {
+          auto it = first_job;
+          std::advance(it, insert_len - 1);
+          new_last = *it;
+        } else {
+          if (first_rank > 0) {
+            new_last = route[first_rank - 1];
+          }
+        }
+        if (!new_last.has_value() || new_last.value() != req.job_rank.value()) {
+          return false;
+        }
+      }
+    } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+      if (last_rank == route.size()) {
+        if (insert_len < 2) {
+          return false;
+        }
+        auto it = first_job;
+        std::advance(it, insert_len - 2);
+        const Index n0 = *it;
+        ++it;
+        const Index n1 = *it;
+        if (n0 != req.pickup_rank.value() || n1 != req.delivery_rank.value()) {
+          return false;
+        }
+      }
+      if (first_rank == (route.size() >= 1 ? route.size() - 1 : 0) && insert_len > 0) {
+        if (route.size() >= 2 && route[route.size() - 2] == req.pickup_rank.value() &&
+            route.back() == req.delivery_rank.value()) {
+          return false;
+        }
+      }
+    }
+  }
+
   const auto& init_load = (route.empty()) ? _zero : _current_loads[0];
 
   const auto& first_deliveries =

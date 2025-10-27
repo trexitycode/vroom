@@ -59,6 +59,25 @@ inline bool get_bool(const rapidjson::Value& object, const char* key) {
   return value;
 }
 
+inline PinnedPosition get_pinned_position(const rapidjson::Value& object,
+                                          const char* key) {
+  PinnedPosition value = PinnedPosition::NONE;
+  if (object.HasMember(key)) {
+    if (!object[key].IsString()) {
+      throw InputException("Invalid " + std::string(key) + " value.");
+    }
+    const std::string s = object[key].GetString();
+    if (s == "first") {
+      value = PinnedPosition::FIRST;
+    } else if (s == "last") {
+      value = PinnedPosition::LAST;
+    } else if (!s.empty()) {
+      throw InputException("Invalid pinned_position value.");
+    }
+  }
+  return value;
+}
+
 inline std::vector<Id>
 get_id_array(const rapidjson::Value& object, const char* key) {
   std::vector<Id> ids;
@@ -530,6 +549,10 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
 
   // New hard-constraint: pinned semantics (optional)
   const bool pinned = get_bool(json_job, "pinned");
+  const auto pinned_position = get_pinned_position(json_job, "pinned_position");
+  if (!pinned && pinned_position != PinnedPosition::NONE) {
+    throw InputException("pinned_position requires pinned: true");
+  }
   auto allowed_vehicles = get_id_array(json_job, "allowed_vehicles");
 
   return Job(json_job["id"].GetUint64(),
@@ -546,6 +569,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_duration_per_type(json_job, "setup_per_type", "job"),
              get_duration_per_type(json_job, "service_per_type", "job"),
              pinned,
+             pinned_position,
              allowed_vehicles);
 }
 
@@ -641,6 +665,11 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
       auto skills = get_skills(json_shipment);
       auto priority = get_priority(json_shipment);
       const bool pinned = get_bool(json_shipment, "pinned");
+      const auto pinned_position =
+        get_pinned_position(json_shipment, "pinned_position");
+      if (!pinned && pinned_position != PinnedPosition::NONE) {
+        throw InputException("pinned_position requires pinned: true");
+      }
       auto allowed_vehicles = get_id_array(json_shipment, "allowed_vehicles");
 
       // Defining pickup job.
@@ -664,6 +693,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                                              "service_per_type",
                                              "pickup"),
                        pinned,
+                       pinned_position,
                        allowed_vehicles);
 
       // Defining delivery job.
@@ -687,6 +717,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                                                "service_per_type",
                                                "delivery"),
                          pinned,
+                         pinned_position,
                          allowed_vehicles);
 
       input.add_shipment(pickup, delivery);

@@ -880,6 +880,10 @@ void Input::set_vehicle_steps_ranks() {
   // Track pinned presence: each pinned job must be present exactly once in exactly one vehicle
   std::vector<unsigned> pinned_appearances(jobs.size(), 0);
 
+  // Prepare boundary anchors containers sized by vehicles
+  _pinned_first_by_vehicle = std::vector<std::optional<PinnedBoundaryRequirement>>(vehicles.size());
+  _pinned_last_by_vehicle = std::vector<std::optional<PinnedBoundaryRequirement>>(vehicles.size());
+
   for (auto& current_vehicle : vehicles) {
     const Index v_rank = &current_vehicle - &vehicles[0];
     for (auto& step : current_vehicle.steps) {
@@ -924,6 +928,23 @@ void Input::set_vehicle_steps_ranks() {
                 "Pinned task {} appears in multiple vehicle.steps.", step.id));
             }
             _pinned_vehicle_by_job[step.rank] = v_rank;
+
+            // Record first/last anchors for single jobs
+            const auto pos = jobs[step.rank].pinned_position;
+            if (pos != PinnedPosition::NONE) {
+              PinnedBoundaryRequirement req;
+              req.job_rank = step.rank;
+              auto& container =
+                (pos == PinnedPosition::FIRST) ? _pinned_first_by_vehicle
+                                               : _pinned_last_by_vehicle;
+              if (container[v_rank].has_value()) {
+                throw InputException(std::format(
+                  "Multiple pinned_position '{}' constraints for vehicle {}.",
+                  (pos == PinnedPosition::FIRST ? "first" : "last"),
+                  current_vehicle.id));
+              }
+              container[v_rank] = req;
+            }
           }
           break;
         }
@@ -1025,6 +1046,31 @@ void Input::set_vehicle_steps_ranks() {
           "Pinned shipment steps {} and {} must be under the same vehicle steps.",
           jobs[j].id,
           jobs[d].id));
+      }
+
+      // If shipment has pinned_position, record boundary requirement
+      const auto pos = jobs[j].pinned_position;
+      if (pos != PinnedPosition::NONE || jobs[d].pinned_position != PinnedPosition::NONE) {
+        // Both should match if provided
+        if (jobs[d].pinned_position != pos) {
+          throw InputException(std::format(
+            "Pinned shipment steps {} and {} must share the same pinned_position.",
+            jobs[j].id,
+            jobs[d].id));
+        }
+        const auto v = _pinned_vehicle_by_job[j].value();
+        PinnedBoundaryRequirement req;
+        req.pickup_rank = j;
+        req.delivery_rank = d;
+        auto& container = (pos == PinnedPosition::FIRST) ? _pinned_first_by_vehicle
+                                                         : _pinned_last_by_vehicle;
+        if (container[v].has_value()) {
+          throw InputException(std::format(
+            "Multiple pinned_position '{}' constraints for vehicle {}.",
+            (pos == PinnedPosition::FIRST ? "first" : "last"),
+            vehicles[v].id));
+        }
+        container[v] = req;
       }
     }
 
@@ -1401,6 +1447,65 @@ Solution Input::solve(const unsigned nb_searches,
       if (it == job_to_vehicle_id.end() || it->second != expected_v_id) {
         throw InputException(std::format(
           "Pinned task {} not assigned to pinned vehicle {}.", job.id, expected_v_id));
+      }
+    }
+
+    // Verify pinned_position constraints
+    for (Index v = 0; v < vehicles.size(); ++v) {
+      const auto& route_opt = std::ranges::find_if(sol.routes, [&](const auto& r){return r.vehicle == vehicles[v].id;});
+      if (route_opt == sol.routes.end()) {
+        continue;
+      }
+      const auto& steps = route_opt->steps;
+      // Build list of job step ids in order
+      std::vector<Id> job_ids;
+      job_ids.reserve(steps.size());
+      for (const auto& s : steps) {
+        if (s.step_type == STEP_TYPE::JOB) {
+          job_ids.push_back(s.id);
+        }
+      }
+      if (const auto pf = pinned_first_for_vehicle(v); pf.has_value()) {
+        const auto& req = pf.value();
+        if (req.job_rank.has_value()) {
+          if (job_ids.empty() || job_ids.front() != jobs[req.job_rank.value()].id) {
+            throw InputException(std::format(
+              "Pinned-first task {} not first on vehicle {}.",
+              jobs[req.job_rank.value()].id,
+              vehicles[v].id));
+          }
+        } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+          if (job_ids.size() < 2 ||
+              job_ids[0] != jobs[req.pickup_rank.value()].id ||
+              job_ids[1] != jobs[req.delivery_rank.value()].id) {
+            throw InputException(std::format(
+              "Pinned-first shipment steps {} and {} not contiguous at start on vehicle {}.",
+              jobs[req.pickup_rank.value()].id,
+              jobs[req.delivery_rank.value()].id,
+              vehicles[v].id));
+          }
+        }
+      }
+      if (const auto pl = pinned_last_for_vehicle(v); pl.has_value()) {
+        const auto& req = pl.value();
+        if (req.job_rank.has_value()) {
+          if (job_ids.empty() || job_ids.back() != jobs[req.job_rank.value()].id) {
+            throw InputException(std::format(
+              "Pinned-last task {} not last on vehicle {}.",
+              jobs[req.job_rank.value()].id,
+              vehicles[v].id));
+          }
+        } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+          if (job_ids.size() < 2 ||
+              job_ids[job_ids.size() - 2] != jobs[req.pickup_rank.value()].id ||
+              job_ids.back() != jobs[req.delivery_rank.value()].id) {
+            throw InputException(std::format(
+              "Pinned-last shipment steps {} and {} not contiguous at end on vehicle {}.",
+              jobs[req.pickup_rank.value()].id,
+              jobs[req.delivery_rank.value()].id,
+              vehicles[v].id));
+          }
+        }
       }
     }
   }

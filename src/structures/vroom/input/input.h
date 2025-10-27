@@ -32,6 +32,14 @@ using Servers =
 
 class VRP;
 
+struct PinnedBoundaryRequirement {
+  // For pinned_position on a single job
+  std::optional<Index> job_rank;
+  // For pinned_position on a shipment (pair)
+  std::optional<Index> pickup_rank;
+  std::optional<Index> delivery_rank;
+};
+
 class Input {
 private:
   TimePoint _start_loading{std::chrono::high_resolution_clock::now()};
@@ -76,6 +84,9 @@ private:
   std::vector<std::vector<bool>> _vehicle_to_vehicle_compatibility;
   // For pinned semantics: if set, job j must stay on pinned vehicle
   std::vector<std::optional<Index>> _pinned_vehicle_by_job;
+  // For pinned_position semantics: requirements per vehicle
+  std::vector<std::optional<PinnedBoundaryRequirement>> _pinned_first_by_vehicle;
+  std::vector<std::optional<PinnedBoundaryRequirement>> _pinned_last_by_vehicle;
   std::unordered_set<Index> _matrices_used_index;
   Index _max_matrices_used_index{0};
   bool _all_locations_have_coords{true};
@@ -217,6 +228,23 @@ public:
 
   // Returns true iff both vehicles have common job candidates.
   bool vehicle_ok_with_vehicle(Index v1_index, Index v2_index) const;
+
+  // Anchors API
+  std::optional<PinnedBoundaryRequirement>
+  pinned_first_for_vehicle(Index v_index) const {
+    if (_pinned_first_by_vehicle.size() <= v_index) {
+      return std::nullopt;
+    }
+    return _pinned_first_by_vehicle[v_index];
+  }
+
+  std::optional<PinnedBoundaryRequirement>
+  pinned_last_for_vehicle(Index v_index) const {
+    if (_pinned_last_by_vehicle.size() <= v_index) {
+      return std::nullopt;
+    }
+    return _pinned_last_by_vehicle[v_index];
+  }
 
   Solution solve(unsigned nb_searches,
                  unsigned depth,

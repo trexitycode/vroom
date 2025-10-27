@@ -71,6 +71,7 @@ A `job` object has the following properties:
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
 | [`time_windows`] | an array of `time_window` objects describing valid slots for job service start |
 | [`pinned`] | boolean. Defaults to false. When true, this task must be listed in exactly one `vehicle.steps` entry in solving mode, and will remain on that vehicle throughout optimization (may be reordered within that vehicle only). If infeasible, the solve fails with a clear error. |
+| [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, this job must be the first task step on its pinned vehicle (ignoring `start`/`break`). If `last`, this job must be the last task step on its pinned vehicle (ignoring `end`/`break`). |
 | [`allowed_vehicles`] | array of vehicle ids eligible for this task |
 
 An error is reported if two `job` objects have the same `id`.
@@ -87,6 +88,7 @@ A `shipment` object has the following properties:
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
 | [`pinned`] | boolean. Applies to the whole shipment (both pickup and delivery). If `true`, both shipment steps must be present under the same `vehicle.steps` entry. |
+| [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, the pickup and delivery must appear contiguously as the first two task steps on the pinned vehicle (pickup then delivery). If `last`, they must appear contiguously as the last two task steps on the pinned vehicle. |
 | [`allowed_vehicles`] | array of vehicle ids eligible for both steps |
 
 A `shipment_step` is similar to a `job` object (expect for shared keys already present in `shipment`):
@@ -287,6 +289,10 @@ vehicles/tasks time windows.
 
 ### Vehicles steps
 When using solving mode seeding, `vehicles.steps` can be used to seed the driver's current route. When a job or shipment is marked `pinned: true`, the `steps` placement determines the vehicle to which that task is pinned. Pinned tasks must appear exactly once in exactly one vehicle's `steps`, and cannot migrate to another vehicle or be dropped. Reordering within the vehicle is allowed.
+
+If `pinned_position` is provided:
+- For jobs, `first` or `last` constrains the job to be respectively the first or last task in the route (ignoring `start`/`end` and `break` steps).
+- For shipments, `first` or `last` constrains the pickup and delivery to be contiguous and placed respectively at the very start or the very end of the route. The order is always pickup then delivery.
 
 ### Notes
 For must-stay-with-driver behavior in solving mode, use `pinned: true` and include the task in that driver's `vehicle.steps`. For soft preferences, combine `allowed_vehicles` with `priority`.

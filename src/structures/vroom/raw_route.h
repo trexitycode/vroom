@@ -174,7 +174,39 @@ public:
     return _current_loads[s];
   }
 
-  bool is_valid_addition_for_tw(const Input&, const Index, const Index) const {
+  bool is_valid_addition_for_tw(const Input& input,
+                                const Index job_rank,
+                                const Index rank) const {
+    // Enforce pinned first/last boundaries (no TW logic here)
+    const auto v = v_rank;
+    if (const auto pf = input.pinned_first_for_vehicle(v); pf.has_value()) {
+      const auto& req = pf.value();
+      if (req.job_rank.has_value()) {
+        // No insertion before the pinned-first job
+        if (rank == 0 && job_rank != req.job_rank.value()) {
+          return false;
+        }
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        // No insertion at ranks 0 or 1 for pinned-first shipment (to preserve [pickup,delivery] at head)
+        if (rank <= 1) {
+          return false;
+        }
+      }
+    }
+    if (const auto pl = input.pinned_last_for_vehicle(v); pl.has_value()) {
+      const auto& req = pl.value();
+      if (req.job_rank.has_value()) {
+        // No insertion after the pinned-last job (i.e., at end)
+        if (rank == route.size() && job_rank != req.job_rank.value()) {
+          return false;
+        }
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        // No insertion at last or pre-last positions for pinned-last shipment
+        if (rank >= (route.size() >= 1 ? route.size() - 1 : 0)) {
+          return false;
+        }
+      }
+    }
     return true;
   };
 
@@ -185,12 +217,119 @@ public:
   };
 
   template <std::forward_iterator Iter>
-  bool is_valid_addition_for_tw(const Input&,
-                                const Amount&,
-                                const Iter,
-                                const Iter,
-                                const Index,
-                                const Index) const {
+  bool is_valid_addition_for_tw(const Input& input,
+                                const Amount& /*delivery*/,
+                                const Iter first_job,
+                                const Iter last_job,
+                                const Index first_rank,
+                                const Index last_rank) const {
+    // Enforce pinned first/last boundaries (no TW logic here)
+    const auto v = v_rank;
+    const auto insert_len = static_cast<unsigned>(std::distance(first_job, last_job));
+
+    if (const auto pf = input.pinned_first_for_vehicle(v); pf.has_value()) {
+      const auto& req = pf.value();
+      if (req.job_rank.has_value()) {
+        if (first_rank == 0) {
+          // After replace, first job must be the pinned-first job
+          Index new_first;
+          if (insert_len > 0) {
+            new_first = *first_job;
+          } else {
+            if (last_rank < route.size()) {
+              new_first = route[last_rank];
+            } else {
+              // Route empty after operation: violates pinned-first presence
+              return false;
+            }
+          }
+          if (new_first != req.job_rank.value()) {
+            return false;
+          }
+        }
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        // For pinned-first shipment, ensure resulting first two are [pickup,delivery]
+        if (first_rank == 0) {
+          std::optional<Index> n0;
+          std::optional<Index> n1;
+          if (insert_len >= 2) {
+            auto it = first_job;
+            n0 = *it;
+            ++it;
+            n1 = *it;
+          } else if (insert_len == 1) {
+            n0 = *first_job;
+            if (last_rank < route.size()) {
+              n1 = route[last_rank];
+            }
+          } else {
+            if (last_rank < route.size()) {
+              n0 = route[last_rank];
+            }
+            if (last_rank + 1 < route.size()) {
+              n1 = route[last_rank + 1];
+            }
+          }
+          if (!n0.has_value() || !n1.has_value() ||
+              n0.value() != req.pickup_rank.value() ||
+              n1.value() != req.delivery_rank.value()) {
+            return false;
+          }
+        }
+        // Also disallow inserting at rank 1 when current head is already the pinned pair
+        if (first_rank == 1 && insert_len > 0) {
+          if (route.size() >= 2 && route[0] == req.pickup_rank.value() &&
+              route[1] == req.delivery_rank.value()) {
+            return false;
+          }
+        }
+      }
+    }
+
+    if (const auto pl = input.pinned_last_for_vehicle(v); pl.has_value()) {
+      const auto& req = pl.value();
+      if (req.job_rank.has_value()) {
+        if (last_rank == route.size()) {
+          // After replace, last job must be the pinned-last job
+          std::optional<Index> new_last;
+          if (insert_len > 0) {
+            auto it = first_job;
+            std::advance(it, insert_len - 1);
+            new_last = *it;
+          } else {
+            if (first_rank > 0) {
+              new_last = route[first_rank - 1];
+            }
+          }
+          if (!new_last.has_value() || new_last.value() != req.job_rank.value()) {
+            return false;
+          }
+        }
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        // For pinned-last shipment, ensure resulting last two are [pickup,delivery]
+        if (last_rank == route.size()) {
+          if (insert_len < 2) {
+            return false;
+          }
+          auto it = first_job;
+          std::advance(it, insert_len - 2);
+          const Index n0 = *it;
+          ++it;
+          const Index n1 = *it;
+          if (n0 != req.pickup_rank.value() || n1 != req.delivery_rank.value()) {
+            return false;
+          }
+        }
+        // Also disallow inserting at pre-last rank when tail is already the pinned pair
+        if (first_rank == (route.size() >= 1 ? route.size() - 1 : 0) && insert_len > 0) {
+          if (route.size() >= 2 && route[route.size() - 2] == req.pickup_rank.value() &&
+              route.back() == req.delivery_rank.value()) {
+            return false;
+          }
+        }
+      }
+    }
+
     return true;
   }
 

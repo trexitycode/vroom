@@ -486,6 +486,200 @@ Object.assign(tests, {
   }
 });
 
+// ---------------- pinned_position tests ----------------
+Object.assign(tests, {
+  async pinned_job_first_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true, pinned_position: 'first' },
+        { id: 2, location_index: 2 }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_job_first_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    const steps = json.routes[0].steps.filter(s => s.type === 'job');
+    if (steps[0].id !== 1) throw new Error('Job 1 should be first');
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_job_last_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      jobs: [
+        { id: 1, location_index: 2, pinned: true, pinned_position: 'last' },
+        { id: 2, location_index: 1 }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_job_last_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    const steps = json.routes[0].steps.filter(s => s.type === 'job');
+    if (steps[steps.length - 1].id !== 1) throw new Error('Job 1 should be last');
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_shipment_first_contiguous_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, capacity: [1], steps: [
+        { type: 'start' }, { type: 'pickup', id: 9001 }, { type: 'delivery', id: 9002 }, { type: 'end' }
+      ] }],
+      shipments: [{ amount: [1], pinned: true, pinned_position: 'first',
+        pickup: { id: 9001, location_index: 1 },
+        delivery: { id: 9002, location_index: 2 }
+      }],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_shipment_first_contiguous_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    const steps = json.routes[0].steps.filter(s => s.type === 'pickup' || s.type === 'delivery');
+    if (!(steps[0].type === 'pickup' && steps[0].id === 9001 && steps[1].type === 'delivery' && steps[1].id === 9002)) {
+      throw new Error('Shipment should be contiguous at start');
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_shipment_last_contiguous_success() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, capacity: [1], steps: [
+        { type: 'start' }, { type: 'pickup', id: 9001 }, { type: 'delivery', id: 9002 }, { type: 'end' }
+      ] }],
+      shipments: [{ amount: [1], pinned: true, pinned_position: 'last',
+        pickup: { id: 9001, location_index: 1 },
+        delivery: { id: 9002, location_index: 2 }
+      }],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_shipment_last_contiguous_success.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    const steps = json.routes[0].steps.filter(s => s.type === 'pickup' || s.type === 'delivery');
+    const n = steps.length;
+    if (!(steps[n-2].type === 'pickup' && steps[n-2].id === 9001 && steps[n-1].type === 'delivery' && steps[n-1].id === 9002)) {
+      throw new Error('Shipment should be contiguous at end');
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_position_without_pinned_err() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      jobs: [ { id: 1, location_index: 1, pinned_position: 'first' } ],
+      matrices: matrix2()
+    };
+    const f = writeJSON(t, 'pinned_position_without_pinned_err.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+  // Bias so that without anchor, optimizer puts unpinned job at end (making pinned job not last)
+  async pinned_job_last_discriminating() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true, pinned_position: 'last' },
+        { id: 2, location_index: 2 }
+      ],
+      matrices: { car: { durations: [
+        // 0 start, 1 job1, 2 job2
+        [0, 200, 10],
+        [200, 0, 10],
+        [10, 10, 0]
+      ]}}
+    };
+    const f = writeJSON(t, 'pinned_job_last_discriminating.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    const jobSteps = json.routes[0].steps.filter(s => s.type === 'job');
+    if (jobSteps[jobSteps.length - 1].id !== 1) {
+      throw new Error('Pinned job 1 must be last with anchor');
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // Shipment first under pressure: extra job that would like to be first
+  async pinned_shipment_first_under_pressure() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, capacity: [1], steps: [
+        { type: 'start' }, { type: 'pickup', id: 9001 }, { type: 'delivery', id: 9002 }, { type: 'end' }
+      ] }],
+      shipments: [{ amount: [1], pinned: true, pinned_position: 'first',
+        pickup: { id: 9001, location_index: 1 },
+        delivery: { id: 9002, location_index: 2 }
+      }],
+      jobs: [ { id: 3, location_index: 3 } ],
+      matrices: { car: { durations: [
+        // 0 start, 1 pickup, 2 delivery, 3 job3
+        [0, 5, 5, 1],
+        [5, 0, 5, 5],
+        [5, 5, 0, 5],
+        [1, 5, 5, 0]
+      ]}}
+    };
+    const f = writeJSON(t, 'pinned_shipment_first_under_pressure.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // Conflicts and mismatched shipment positions
+  async pinned_position_conflict_same_vehicle_err() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, steps: [
+        { type: 'start' }, { type: 'job', id: 1 }, { type: 'job', id: 2 }, { type: 'end' }
+      ] }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true, pinned_position: 'first' },
+        { id: 2, location_index: 2, pinned: true, pinned_position: 'first' }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pinned_position_conflict_same_vehicle_err.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pinned_shipment_conflict_with_job_first_err() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 101, start_index: 0, capacity: [1], steps: [
+        { type: 'start' }, { type: 'pickup', id: 9001 }, { type: 'delivery', id: 9002 }, { type: 'job', id: 1 }, { type: 'end' }
+      ] }],
+      shipments: [{ amount: [1], pinned: true, pinned_position: 'first',
+        pickup: { id: 9001, location_index: 1 },
+        delivery: { id: 9002, location_index: 2 }
+      }],
+      jobs: [ { id: 1, location_index: 0, pinned: true, pinned_position: 'first' } ],
+      matrices: { car: { durations: [[0,10,10,10],[10,0,10,10],[10,10,0,10],[10,10,10,0]] } }
+    };
+    const f = writeJSON(t, 'pinned_shipment_conflict_with_job_first_err.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  }
+});
+
 async function main() {
   const order = [
     'job_allowed_unassigned',
@@ -509,7 +703,17 @@ async function main() {
     'pinned_two_jobs_same_vehicle_success',
     'pinned_shipment_partial_steps_err',
     'pinned_job_plus_unpinned_assigned_success',
-    'pinned_vs_unpinned_cheaper_selection'
+    'pinned_vs_unpinned_cheaper_selection',
+    // pinned_position
+    'pinned_job_first_success',
+    'pinned_job_last_success',
+    'pinned_shipment_first_contiguous_success',
+    'pinned_shipment_last_contiguous_success',
+    'pinned_position_without_pinned_err',
+    'pinned_job_last_discriminating',
+    'pinned_shipment_first_under_pressure',
+    'pinned_position_conflict_same_vehicle_err',
+    'pinned_shipment_conflict_with_job_first_err'
   ];
 
   let pass = 0, fail = 0;

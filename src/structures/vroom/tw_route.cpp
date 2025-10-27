@@ -734,6 +734,68 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
   // Value initialization differ whether there are actually jobs added
   // or not.
   if (first_job < last_job) {
+    // Anchor guards: enforce pinned first/last before TW math
+    const auto insert_len = static_cast<unsigned>(std::distance(first_job, last_job));
+    if (const auto pf = input.pinned_first_for_vehicle(v_rank); pf.has_value()) {
+      const auto& req = pf.value();
+      if (req.job_rank.has_value()) {
+        if (first_rank == 0) {
+          Index new_first;
+          new_first = *first_job;
+          if (new_first != req.job_rank.value()) {
+            return false;
+          }
+        }
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        if (first_rank == 0) {
+          if (insert_len < 2) {
+            return false;
+          }
+          auto it = first_job;
+          const Index n0 = *it;
+          ++it;
+          const Index n1 = *it;
+          if (n0 != req.pickup_rank.value() || n1 != req.delivery_rank.value()) {
+            return false;
+          }
+        }
+        if (first_rank == 1) {
+          if (!route.empty() && route[0] == req.pickup_rank.value()) {
+            if (route.size() < 2 || route[1] != req.delivery_rank.value()) {
+              return false;
+            }
+            return false;
+          }
+        }
+      }
+    }
+    if (const auto pl = input.pinned_last_for_vehicle(v_rank); pl.has_value()) {
+      const auto& req = pl.value();
+      if (req.job_rank.has_value()) {
+        if (last_rank == route.size()) {
+          Index new_last;
+          auto it = first_job;
+          std::advance(it, insert_len - 1);
+          new_last = *it;
+          if (new_last != req.job_rank.value()) {
+            return false;
+          }
+        }
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        if (last_rank == route.size()) {
+          if (insert_len < 2) {
+            return false;
+          }
+          auto it = first_job;
+          std::advance(it, insert_len - 2);
+          const Index n0 = *it; ++it; const Index n1 = *it;
+          if (n0 != req.pickup_rank.value() || n1 != req.delivery_rank.value()) {
+            return false;
+          }
+        }
+      }
+    }
+
     current = previous_info(input, *first_job, first_rank);
     next = next_info(input, *(last_job - 1), last_rank);
   } else {
