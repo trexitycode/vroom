@@ -1089,6 +1089,22 @@ void Input::set_vehicle_steps_ranks() {
   }
 }
 
+void Input::enforce_pinned_eligibility() {
+  if (_pinned_vehicle_by_job.empty()) {
+    return;
+  }
+  for (Index j = 0; j < jobs.size(); ++j) {
+    if (_pinned_vehicle_by_job[j].has_value()) {
+      const auto v_rank = _pinned_vehicle_by_job[j].value();
+      _vehicle_to_job_compatibility[v_rank][j] = true;
+      auto& list = compatible_vehicles_for_job[j];
+      if (std::ranges::find(list, v_rank) == list.end()) {
+        list.push_back(v_rank);
+      }
+    }
+  }
+}
+
 void Input::init_missing_matrices(const std::string& profile) {
   // Even with custom matrices, we still need routing after
   // optimization if geometry is requested.
@@ -1375,19 +1391,8 @@ Solution Input::solve(const unsigned nb_searches,
   // Fill vehicle/job compatibility matrices.
   set_skills_compatibility();
   set_extra_compatibility();
+  enforce_pinned_eligibility();
   set_vehicles_compatibility();
-
-  // Fail-fast: pinned tasks must be compatible (capacity/TW) with their pinned vehicle
-  if (!_pinned_vehicle_by_job.empty()) {
-    for (Index j = 0; j < jobs.size(); ++j) {
-      if (_pinned_vehicle_by_job[j].has_value() &&
-          !_vehicle_to_job_compatibility[_pinned_vehicle_by_job[j].value()][j]) {
-        const auto v_id = vehicles[_pinned_vehicle_by_job[j].value()].id;
-        throw InputException(std::format(
-          "Pinned task {} infeasible on vehicle {}.", jobs[j].id, v_id));
-      }
-    }
-  }
 
   set_jobs_vehicles_evals();
 

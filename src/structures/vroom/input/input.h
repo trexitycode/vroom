@@ -134,6 +134,10 @@ private:
 
   void add_routing_wrapper(const std::string& profile);
 
+  // Ensure pinned tasks remain eligible on their pinned vehicle during seeding
+  // (relax pre-compat restrictions; feasibility is handled during solve).
+  void enforce_pinned_eligibility();
+
 public:
   std::vector<Job> jobs;
   std::vector<Vehicle> vehicles;
