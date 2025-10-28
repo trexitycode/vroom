@@ -38,7 +38,6 @@ int main(int argc, char** argv) {
                            "VROOM Copyright (C) 2015-2025, Julien Coupey\n"
                            "Version: " +
                              vroom::get_version() +
-                             " (Trexity edition 20251027)"
                              "\n\n"
                              "A command-line utility to solve complex vehicle "
                              "routing problems.\n");

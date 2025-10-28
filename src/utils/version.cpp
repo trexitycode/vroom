@@ -13,7 +13,9 @@ namespace vroom {
 
 std::string get_version() {
   std::string version = std::format("{}.{}.{}", MAJOR, MINOR, PATCH);
-  if (DEV) {
+  if (TREXITY_EDITION.size() > 0) {
+    version += std::format(" (Trexity edition {})", TREXITY_EDITION);
+  } else if (DEV) {
     version += "-dev";
   } else {
     if (RC > 0) {
