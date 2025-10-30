@@ -570,17 +570,32 @@ void Input::set_extra_compatibility() {
   compatible_vehicles_for_job = std::vector<std::vector<Index>>(jobs.size());
 
   for (std::size_t v = 0; v < vehicles.size(); ++v) {
-    const TWRoute empty_route(*this, v, _zero.size());
+    TWRoute probe_route(*this, v, _zero.size());
+    Index insert_rank = 0;
+    if (const auto pf = pinned_first_for_vehicle(v); pf.has_value()) {
+      std::vector<Index> pinned_first;
+      const auto& req = pf.value();
+      if (req.job_rank.has_value()) {
+        pinned_first.push_back(req.job_rank.value());
+      } else if (req.pickup_rank.has_value() && req.delivery_rank.has_value()) {
+        pinned_first.push_back(req.pickup_rank.value());
+        pinned_first.push_back(req.delivery_rank.value());
+      }
+      if (!pinned_first.empty()) {
+        probe_route.seed_relaxed_from_job_ranks(*this, _zero, pinned_first);
+        insert_rank = static_cast<Index>(probe_route.route.size());
+      }
+    }
     for (Index j = 0; j < jobs.size(); ++j) {
       if (!_vehicle_to_job_compatibility[v][j]) {
         continue;
       }
 
       bool is_compatible =
-        empty_route.is_valid_addition_for_capacity(*this,
+        probe_route.is_valid_addition_for_capacity(*this,
                                                    jobs[j].pickup,
                                                    jobs[j].delivery,
-                                                   0);
+                                                   insert_rank);
 
       const bool is_shipment_pickup = (jobs[j].type == JOB_TYPE::PICKUP);
 
@@ -588,17 +603,17 @@ void Input::set_extra_compatibility() {
         if (jobs[j].type == JOB_TYPE::SINGLE) {
           is_compatible =
             is_compatible &&
-            empty_route.is_valid_addition_for_tw_without_max_load(*this, j, 0);
+            probe_route.is_valid_addition_for_tw_without_max_load(*this, j, insert_rank);
         } else {
           assert(is_shipment_pickup);
           std::vector<Index> p_d({j, static_cast<Index>(j + 1)});
           is_compatible =
-            is_compatible && empty_route.is_valid_addition_for_tw(*this,
+            is_compatible && probe_route.is_valid_addition_for_tw(*this,
                                                                   _zero,
                                                                   p_d.begin(),
                                                                   p_d.end(),
-                                                                  0,
-                                                                  0);
+                                                                  insert_rank,
+                                                                  insert_rank);
         }
       }
 
