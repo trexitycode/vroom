@@ -10,6 +10,7 @@ All rights reserved (see LICENSE).
 #include <algorithm>
 
 #include "algorithms/heuristics/heuristics.h"
+#include "structures/vroom/tw_route.h"
 #include "utils/helpers.h"
 
 namespace vroom::heuristics {
@@ -278,6 +279,10 @@ inline Eval fill_route(const Input& input,
         }
 
         for (Index r = 0; r <= route.size(); ++r) {
+          if (input.pinned_soft_timing() && input.pinned_violation_budget() == 0 &&
+              r < route.size() && input.jobs[route.route[r]].pinned) {
+            continue;
+          }
           const auto current_eval =
             utils::addition_cost(input, job_rank, vehicle, route.route, r);
 
@@ -329,6 +334,10 @@ inline Eval fill_route(const Input& input,
         }
 
         for (Index pickup_r = 0; pickup_r <= route.size(); ++pickup_r) {
+          if (input.pinned_soft_timing() && input.pinned_violation_budget() == 0 &&
+              pickup_r < route.size() && input.jobs[route.route[pickup_r]].pinned) {
+            continue;
+          }
           const auto p_add = utils::addition_cost(input,
                                                   job_rank,
                                                   vehicle,
@@ -830,16 +839,38 @@ void set_route(const Input& input,
                                         job_ranks.end(),
                                         0,
                                         0)) {
-      throw InputException(
-        std::format("Infeasible route for vehicle {}.", vehicle.id));
+      if constexpr (std::is_same_v<Route, TWRoute>) {
+        if (input.pinned_soft_timing()) {
+          // Seed route ignoring time windows; preserve pinned membership.
+          route.seed_relaxed_from_job_ranks(input, single_jobs_deliveries, job_ranks);
+        } else {
+          throw InputException(
+            std::format("Infeasible route for vehicle {}.", vehicle.id));
+        }
+      } else {
+        throw InputException(
+          std::format("Infeasible route for vehicle {}.", vehicle.id));
+      }
+    } else {
+      route.replace(input,
+                    single_jobs_deliveries,
+                    job_ranks.begin(),
+                    job_ranks.end(),
+                    0,
+                    0);
     }
 
-    route.replace(input,
-                  single_jobs_deliveries,
-                  job_ranks.begin(),
-                  job_ranks.end(),
-                  0,
-                  0);
+    if constexpr (std::is_same_v<Route, TWRoute>) {
+      // Initialize baseline data if not already set (after replace or relaxed seed)
+      if (route.baseline_service_start.size() != route.route.size()) {
+        route.baseline_service_start.resize(route.route.size());
+        route.is_pinned_step.resize(route.route.size());
+        for (std::size_t i = 0; i < route.route.size(); ++i) {
+          route.baseline_service_start[i] = route.earliest[i];
+          route.is_pinned_step[i] = input.jobs[route.route[i]].pinned;
+        }
+      }
+    }
   }
 }
 

@@ -62,6 +62,9 @@ private:
   bool _report_distances;
   bool _has_jobs{false};
   bool _has_shipments{false};
+  // Preserve pinned semantics flags
+  bool _pinned_soft_timing{false};
+  Duration _pinned_violation_budget{0};
   std::unordered_map<std::string,
                      Matrix<UserDuration>,
                      StringHash,
@@ -181,6 +184,23 @@ public:
 
   bool apply_TSPFix() const {
     return _apply_TSPFix;
+  }
+
+  // Preserve pinned
+  void set_pinned_soft_timing(bool v) {
+    _pinned_soft_timing = v;
+  }
+
+  void set_pinned_violation_budget(UserDuration s) {
+    _pinned_violation_budget = utils::scale_from_user_duration(s);
+  }
+
+  bool pinned_soft_timing() const {
+    return _pinned_soft_timing;
+  }
+
+  Duration pinned_violation_budget() const {
+    return _pinned_violation_budget;
   }
 
   bool is_used_several_times(const Location& location) const;

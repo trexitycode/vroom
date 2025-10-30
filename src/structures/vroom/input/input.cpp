@@ -1090,7 +1090,7 @@ void Input::set_vehicle_steps_ranks() {
 }
 
 void Input::enforce_pinned_eligibility() {
-  if (_pinned_vehicle_by_job.empty()) {
+  if (_pinned_vehicle_by_job.empty() || !_pinned_soft_timing) {
     return;
   }
   for (Index j = 0; j < jobs.size(); ++j) {

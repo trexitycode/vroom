@@ -50,6 +50,40 @@ The problem description is read from standard input or from a file
 | [[`matrices`](#matrices)] | optional description of per-profile custom matrices |
 | ~~[`matrix`]~~ | optional two-dimensional array describing a custom matrix |
 
+## Global options
+
+In addition to the top-level keys above, the following optional global flags apply to solving mode:
+
+| Key | Description |
+| --- | --- |
+| `pinned_soft_timing` | boolean (default `false`). When `true`, time windows for seeded pinned tasks (those marked `pinned: true` and present in `vehicle.steps`) are treated as soft for the seed: if the pinned-only route is time-window infeasible (e.g., due to updated travel times), the solver returns a solution with explicit violations instead of failing. Adding extra (non‑pinned) work is allowed only if it does not worsen pinned timing beyond the configured lateness limit (see `pinned_lateness_limit_sec`). Note: membership ("this work stays on this vehicle") is controlled by `pinned: true` + presence in `vehicle.steps`, not by this flag. |
+| `pinned_lateness_limit_sec` | integer seconds (default `0`). Maximum additional lateness that may be introduced before any pinned step by interleaving extra tasks. `0` means strict “no-worsen”: no insertion is allowed before the first pinned task in a route; positive values allow small added delay up to the budget.
+
+Example:
+
+```
+{
+  "pinned_soft_timing": true,
+  "pinned_lateness_limit_sec": 10,
+  "vehicles": [
+    { "id": 101, "start_index": 0, "steps": [
+      { "type": "start" },
+      { "type": "pickup", "id": 9001 },
+      { "type": "delivery", "id": 9002 },
+      { "type": "end" }
+    ] }
+  ],
+  "shipments": [
+    { "amount": [1], "pinned": true,
+      "pickup": { "id": 9001, "location_index": 1 },
+      "delivery": { "id": 9002, "location_index": 2 }
+    }
+  ],
+  "jobs": [ { "id": 3, "location_index": 3 } ],
+  "matrices": { "car": { "durations": [[0,5,5,1],[5,0,5,5],[5,5,0,5],[3,5,5,0]] } }
+}
+```
+
 ## Jobs
 
 A `job` object has the following properties:
@@ -70,7 +104,7 @@ A `job` object has the following properties:
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
 | [`time_windows`] | an array of `time_window` objects describing valid slots for job service start |
-| [`pinned`] | boolean. Defaults to false. When true, this task must be listed in exactly one `vehicle.steps` entry in solving mode, and will remain on that vehicle throughout optimization (may be reordered within that vehicle only). If infeasible, the solve fails with a clear error. |
+| [`pinned`] | boolean. Defaults to false. When true, this task must be listed in exactly one `vehicle.steps` entry in solving mode, and will remain on that vehicle throughout optimization (may be reordered within that vehicle only). If the seeded pinned route is time‑window infeasible, the solve fails unless `pinned_soft_timing` is `true` (in which case a solution is returned with explicit violations). |
 | [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, this job must be the first task step on its pinned vehicle (ignoring `start`/`break`). If `last`, this job must be the last task step on its pinned vehicle (ignoring `end`/`break`). |
 | [`allowed_vehicles`] | array of vehicle ids eligible for this task |
 
@@ -87,7 +121,7 @@ A `shipment` object has the following properties:
 | [`amount`] | an array of integers describing multidimensional quantities |
 | [`skills`] | an array of integers defining mandatory skills |
 | [`priority`] | an integer in the `[0, 100]` range describing priority level (defaults to 0) |
-| [`pinned`] | boolean. Applies to the whole shipment (both pickup and delivery). If `true`, both shipment steps must be present under the same `vehicle.steps` entry. |
+| [`pinned`] | boolean. Applies to the whole shipment (both pickup and delivery). If `true`, both shipment steps must be present under the same `vehicle.steps` entry. If the seeded pinned route is time‑window infeasible, the solve fails unless `pinned_soft_timing` is `true` (in which case a solution is returned with explicit violations). |
 | [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, the pickup and delivery must appear contiguously as the first two task steps on the pinned vehicle (pickup then delivery). If `last`, they must appear contiguously as the last two task steps on the pinned vehicle. |
 | [`allowed_vehicles`] | array of vehicle ids eligible for both steps |
 

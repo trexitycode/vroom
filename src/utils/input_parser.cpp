@@ -615,6 +615,20 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
     throw InputException("Input root is not an object.");
   }
 
+  // Optional pinned_soft_timing flag at root
+  if (json_input.HasMember("pinned_soft_timing")) {
+    if (!json_input["pinned_soft_timing"].IsBool()) {
+      throw InputException("Invalid pinned_soft_timing value.");
+    }
+    input.set_pinned_soft_timing(json_input["pinned_soft_timing"].GetBool());
+  }
+  if (json_input.HasMember("pinned_lateness_limit_sec")) {
+    if (!json_input["pinned_lateness_limit_sec"].IsUint()) {
+      throw InputException("Invalid pinned_lateness_limit_sec duration.");
+    }
+    input.set_pinned_violation_budget(json_input["pinned_lateness_limit_sec"].GetUint());
+  }
+
   if (!json_input.HasMember("vehicles") || !json_input["vehicles"].IsArray()) {
     throw InputException("Invalid vehicles.");
   }

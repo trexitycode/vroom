@@ -126,6 +126,11 @@ public:
   std::vector<Amount> fwd_smallest_breaks_load_margin;
   std::vector<Amount> bwd_smallest_breaks_load_margin;
 
+  // Baseline service start timestamps for the initially seeded route
+  // and a mask to identify pinned steps at each rank.
+  std::vector<Duration> baseline_service_start;
+  std::vector<bool> is_pinned_step;
+
   TWRoute(const Input& input, Index v, unsigned amount_size);
 
   // Check validity for addition of job at job_rank in current route
@@ -222,6 +227,12 @@ public:
                Iter last_job,
                Index first_rank,
                Index last_rank);
+
+  // Build route directly from job_ranks without applying TW constraints.
+  // Used when pinned_soft_timing is enabled to seed an infeasible pinned route.
+  void seed_relaxed_from_job_ranks(const Input& input,
+                                   const Amount& single_jobs_delivery,
+                                   const std::vector<Index>& job_ranks);
 };
 
 } // namespace vroom

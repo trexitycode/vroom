@@ -101,6 +101,53 @@ TWRoute::TWRoute(const Input& input, Index v, unsigned amount_size)
   }
 }
 
+void TWRoute::seed_relaxed_from_job_ranks(const Input& input,
+                                          const Amount& single_jobs_delivery,
+                                          const std::vector<Index>& job_ranks) {
+  // Initialize route directly, ignoring time windows. Compute baseline earliest service starts.
+  set_route(input, job_ranks);
+
+  const auto& v = input.vehicles[v_rank];
+  const std::size_t n = route.size();
+  earliest.assign(n, 0);
+  latest.assign(n, v_end); // loose bound
+  action_time.assign(n, 0);
+  breaks_at_rank.assign(n, 0);
+  breaks_counts.assign(n, 0);
+  baseline_service_start.assign(n, 0);
+  is_pinned_step.assign(n, false);
+
+  // Forward pass computing service start times (no TW clamp)
+  Duration current_earliest = v_start;
+  std::optional<Index> previous_index;
+  if (has_start) {
+    previous_index = v.start.value().index();
+  }
+  for (std::size_t i = 0; i < n; ++i) {
+    const auto& j = input.jobs[route[i]];
+    if (previous_index.has_value()) {
+      current_earliest += v.duration(previous_index.value(), j.index());
+    }
+    earliest[i] = current_earliest;
+    baseline_service_start[i] = current_earliest;
+    is_pinned_step[i] = j.pinned;
+
+    const auto job_action_time = (previous_index.has_value() && j.index() == previous_index.value())
+                                   ? j.services[v_type]
+                                   : j.setups[v_type] + j.services[v_type];
+    action_time[i] = job_action_time;
+    current_earliest += job_action_time;
+    previous_index = j.index();
+
+    if (i > 0) {
+      breaks_counts[i] = breaks_counts[i - 1];
+    }
+  }
+
+  // Update load-related internal state to keep route consistent
+  update_amounts(input);
+}
+
 PreviousInfo TWRoute::previous_info(const Input& input,
                                     const Index job_rank,
                                     const Index rank) const {
@@ -719,6 +766,15 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
                                        const Index first_rank,
                                        const Index last_rank,
                                        bool check_max_load) const {
+  // Preserve-pinned hard no-prepend rule when budget==0 and route already has
+  // at least one pinned job: do not allow any insertion at route start.
+  if (input.pinned_soft_timing() && input.pinned_violation_budget() == 0 &&
+      first_rank == 0 && !route.empty()) {
+    const bool has_pinned_in_route = std::ranges::any_of(route, [&](Index jr){return input.jobs[jr].pinned;});
+    if (has_pinned_in_route) {
+      return false;
+    }
+  }
   assert(first_job <= last_job);
   assert(first_rank <= last_rank);
 
@@ -830,6 +886,14 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
         return true;
       }
     }
+  }
+
+  // If pinned_soft_timing with zero budget: categorically forbid inserting
+  // right before a pinned step to avoid any added delay.
+  if (input.pinned_soft_timing() && input.pinned_violation_budget() == 0 &&
+      last_rank < route.size() &&
+      input.jobs[route[last_rank]].pinned) {
+    return false;
   }
 
   // Determine break range between first_rank and last_rank.
@@ -1067,7 +1131,62 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
     }
   }
 
-  return current.earliest + next.travel <= next.latest;
+  const bool tw_ok = (current.earliest + next.travel <= next.latest);
+
+  if (!tw_ok) {
+    // Keep default behavior when not preserving pinned
+    if (!input.pinned_soft_timing()) {
+      return false;
+    }
+    // If we preserve pinned, we allow infeasible TW at seeding stage only when
+    // there is no insertion (seeding callers use first_rank==last_rank==0 and
+    // last_rank may be 0 with empty route). Still, rely on heuristics to seed relaxed.
+  }
+
+  if (input.pinned_soft_timing() && last_rank < route.size() && !baseline_service_start.empty()) {
+    // Compute added delay at the next original step.
+    const Duration arrival_with_insertion = current.earliest + next.travel;
+    const Duration baseline = baseline_service_start[last_rank];
+    const Duration delta = (arrival_with_insertion > baseline)
+                             ? (arrival_with_insertion - baseline)
+                             : 0;
+
+    // Compute allowed added delay up to any pinned step at or after last_rank.
+    Duration allowed = std::numeric_limits<Duration>::max();
+    for (Index k = last_rank; k < route.size(); ++k) {
+      if (input.jobs[route[k]].pinned) {
+        const auto& j = input.jobs[route[k]];
+        const Duration base_k = (k < baseline_service_start.size()) ? baseline_service_start[k] : baseline;
+        // Find first TW whose end >= base_k
+        Duration step_allowed = 0;
+        bool late_already = true;
+        for (const auto& tw : j.tws) {
+          if (base_k <= tw.end) {
+            late_already = (base_k > tw.end);
+            const Duration slack = (tw.end >= base_k) ? (tw.end - base_k) : 0;
+            // If base is before tw.start, slack is still measured to end (we don't penalize early arrival)
+            step_allowed = std::min(slack, input.pinned_violation_budget());
+            break;
+          }
+        }
+        if (late_already) {
+          step_allowed = 0;
+        }
+        if (step_allowed < allowed) {
+          allowed = step_allowed;
+        }
+      }
+    }
+    if (allowed == std::numeric_limits<Duration>::max()) {
+      // No pinned steps ahead; no guard.
+      return tw_ok;
+    }
+    if (delta > allowed) {
+      return false;
+    }
+  }
+
+  return tw_ok;
 }
 
 template <std::random_access_iterator Iter>

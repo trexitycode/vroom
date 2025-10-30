@@ -126,10 +126,6 @@ const tests = {
     fs.rmSync(t, { recursive: true, force: true });
   },
 
-  async job_required_fail() {
-    // Legacy test removed since required never existed now. Keep as no-op pass.
-  },
-
   async job_pinned_allowed_success() {
     const t = tmpDir();
     const input = {
@@ -162,10 +158,6 @@ const tests = {
     assertExit(0, code);
     assertJsonEq(json, '.summary.unassigned', 2);
     fs.rmSync(t, { recursive: true, force: true });
-  },
-
-  async shipment_required_fail() {
-    // Legacy test removed since required never existed now. Keep as no-op pass.
   },
 
   async shipment_pinned_allowed_success() {
@@ -216,10 +208,6 @@ const tests = {
     const { code } = runVroom(f);
     assertExit(2, code);
     fs.rmSync(t, { recursive: true, force: true });
-  },
-
-  async required_vehicle_deprecated_fail() {
-    // Legacy test removed since required_vehicle never existed now. Keep as no-op pass.
   },
 
   async pinned_job_stays_same_vehicle() {
@@ -334,11 +322,9 @@ const tests = {
     const { code } = runVroom(f);
     assertExit(2, code);
     fs.rmSync(t, { recursive: true, force: true });
-  }
-};
+  },
 
-// ---------------- Additional Edge Case Tests ----------------
-Object.assign(tests, {
+  // ---------------- Additional Edge Case Tests ----------------
   async pinned_job_reorder_with_added_task_success() {
     const t = tmpDir();
     const input = {
@@ -483,11 +469,9 @@ Object.assign(tests, {
       throw new Error(`Expected both jobs [1,2] on vehicle 101, got [${jobIds}]`);
     }
     fs.rmSync(t, { recursive: true, force: true });
-  }
-});
+  },
 
-// ---------------- pinned_position tests ----------------
-Object.assign(tests, {
+  // ---------------- pinned_position tests ----------------
   async pinned_job_first_success() {
     const t = tmpDir();
     const input = {
@@ -587,6 +571,7 @@ Object.assign(tests, {
     assertExit(2, code);
     fs.rmSync(t, { recursive: true, force: true });
   },
+
   // Bias so that without anchor, optimizer puts unpinned job at end (making pinned job not last)
   async pinned_job_last_discriminating() {
     const t = tmpDir();
@@ -677,20 +662,163 @@ Object.assign(tests, {
     const { code } = runVroom(f);
     assertExit(2, code);
     fs.rmSync(t, { recursive: true, force: true });
+  },
+
+// ---------------- pinned_soft_timing tests ----------------
+  // With pinned_soft_timing=true and budget=0, inserting extra work before a pinned step
+  // should be blocked (no additional delay allowed). We expect unassigned=1.
+  async pinned_soft_timing_blocks_pre_insertion_budget0() {
+    const t = tmpDir();
+    const input = {
+      pinned_soft_timing: true,
+      pinned_lateness_limit_sec: 0,
+      vehicles: [
+        { id: 101, start_index: 0, capacity: [1], steps: [
+          { type: 'start' },
+          { type: 'pickup', id: 9001 },
+          { type: 'delivery', id: 9002 },
+          { type: 'end' }
+        ] }
+      ],
+      shipments: [
+        { amount: [1], pinned: true, allowed_vehicles: [101],
+          pickup: { id: 9001, location_index: 1, time_windows: [[0, 1000]], service: 0 },
+          delivery: { id: 9002, location_index: 2, time_windows: [[0, 5000]], service: 0 }
+        }
+      ],
+      jobs: [ { id: 3, location_index: 3, service: 0, time_windows: [[0, 2]] } ],
+      matrices: {
+        car: { durations: [
+          // 0 start, 1 pickup, 2 delivery, 3 extra job
+          [0, 5, 5, 1],
+          [5, 0, 5, 5],
+          [5, 5, 0, 5],
+          [3, 5, 5, 0]
+        ]}
+      }
+    };
+    const f = writeJSON(t, 'pinned_soft_timing_blocks_pre_insertion_budget0.json', input);
+    const { code, json } = runVroom(f);
+    // EXPECTED AFTER IMPLEMENTATION: exit 0 with extra job unassigned
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 1);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // With pinned_soft_timing=true and small budget, allow small added delay before pinned step
+  // We expect the extra job to be assigned when budget >= delta.
+  async pinned_violation_budget_allows_small_delay() {
+    const t = tmpDir();
+    const base = {
+      vehicles: [
+        { id: 101, start_index: 0, capacity: [1], steps: [
+          { type: 'start' },
+          { type: 'pickup', id: 9001 },
+          { type: 'delivery', id: 9002 },
+          { type: 'end' }
+        ] }
+      ],
+      shipments: [
+        { amount: [1], pinned: true, allowed_vehicles: [101],
+          pickup: { id: 9001, location_index: 1, time_windows: [[0, 1000]], service: 0 },
+          delivery: { id: 9002, location_index: 2, time_windows: [[0, 5000]], service: 0 }
+        }
+      ],
+      jobs: [ { id: 3, location_index: 3, service: 0, time_windows: [[0, 2]] } ],
+      matrices: {
+        car: { durations: [
+          // 0 start, 1 pickup, 2 delivery, 3 extra job
+          // Going 0->3->1 adds +1s vs 0->1 direct
+          [0, 5, 5, 1],
+          [5, 0, 5, 5],
+          [5, 5, 0, 5],
+          [3, 5, 5, 0]
+        ]}
+      }
+    };
+
+    // Case A: budget too small (0) -> expect extra job unassigned
+    const a = JSON.parse(JSON.stringify(base));
+    a.pinned_soft_timing = true;
+    a.pinned_lateness_limit_sec = 0;
+    let f = writeJSON(t, 'pinned_budget_small.json', a);
+    let r = runVroom(f);
+    // EXPECTED AFTER IMPLEMENTATION: exit 0 and unassigned=1
+    assertExit(0, r.code);
+    assertJsonEq(r.json, '.summary.unassigned', 1);
+
+    // Case B: budget sufficient (>=1) -> expect extra job assigned
+    const b = JSON.parse(JSON.stringify(base));
+    b.pinned_soft_timing = true;
+    b.pinned_lateness_limit_sec = 5;
+    f = writeJSON(t, 'pinned_budget_large.json', b);
+    r = runVroom(f);
+    // EXPECTED AFTER IMPLEMENTATION: exit 0 and unassigned=0
+    assertExit(0, r.code);
+    assertJsonEq(r.json, '.summary.unassigned', 0);
+    const steps = r.json.routes[0].steps;
+    const found = steps.some(s => s.type === 'job' && s.id === 3);
+    if (!found) throw new Error('Expected extra job 3 assigned on vehicle 101');
+
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // Minimal infeasible seed: pinned job with unreachable TW under provided matrix
+  // With pinned_soft_timing=true, solver should not fail; current behavior fails.
+  async pinned_soft_timing_saves_infeasible_seed() {
+    const t = tmpDir();
+    const input = {
+      pinned_soft_timing: true,
+      pinned_lateness_limit_sec: 0,
+      vehicles: [
+        { id: 101, start_index: 0, steps: [
+          { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+        ] }
+      ],
+      jobs: [ { id: 1, location_index: 1, pinned: true, service: 0, time_windows: [[0, 10]] } ],
+      matrices: { car: { durations: [
+        // 0 start, 1 job; travel = 20 > latest 10
+        [0, 20],
+        [20, 0]
+      ] } }
+    };
+    const f = writeJSON(t, 'pinned_soft_timing_saves_infeasible_seed.json', input);
+    const { code } = runVroom(f);
+    // EXPECTED AFTER IMPLEMENTATION: exit 0
+    assertExit(0, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // Control: with pinned_soft_timing=false, infeasible seed should fail (current behavior)
+  async pinned_soft_timing_off_infeasible_seed_fails() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [
+        { id: 101, start_index: 0, steps: [
+          { type: 'start' }, { type: 'job', id: 1 }, { type: 'end' }
+        ] }
+      ],
+      jobs: [ { id: 1, location_index: 1, pinned: true, service: 0, time_windows: [[0, 10]] } ],
+      matrices: { car: { durations: [
+        [0, 20],
+        [20, 0]
+      ] } }
+    };
+    const f = writeJSON(t, 'pinned_soft_timing_off_infeasible_seed_fails.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
   }
-});
+};
 
 async function main() {
   const order = [
     'job_allowed_unassigned',
-    'job_required_fail',
     'job_pinned_allowed_success',
     'shipment_allowed_unassigned',
-    'shipment_required_fail',
     'shipment_pinned_allowed_success',
     'skills_and_allowed_ok',
     'skills_and_allowed_fail',
-    'required_vehicle_deprecated_fail',
     'pinned_job_stays_same_vehicle',
     'pinned_job_missing_in_steps_err',
     'pinned_job_in_two_vehicles_err',
@@ -713,7 +841,12 @@ async function main() {
     'pinned_job_last_discriminating',
     'pinned_shipment_first_under_pressure',
     'pinned_position_conflict_same_vehicle_err',
-    'pinned_shipment_conflict_with_job_first_err'
+    'pinned_shipment_conflict_with_job_first_err',
+    // New tests for pinned_soft_timing semantics
+    'pinned_soft_timing_blocks_pre_insertion_budget0',
+    'pinned_violation_budget_allows_small_delay',
+    'pinned_soft_timing_saves_infeasible_seed',
+    'pinned_soft_timing_off_infeasible_seed_fails'
   ];
 
   let pass = 0, fail = 0;
