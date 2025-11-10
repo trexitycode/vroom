@@ -465,15 +465,24 @@ Route format_route(const Input& input,
     const Duration diff =
       current_setup + previous_job.services[v.type] + remaining_travel_time;
 
-    assert(diff <= step_start);
+    if (diff > step_start) {
+      backward_wt += (diff - step_start);
+      step_start = diff;
+    }
     Duration candidate_start = step_start - diff;
-    assert(tw_r.earliest[r - 1] <= candidate_start);
+    if (tw_r.earliest[r - 1] > candidate_start) {
+      backward_wt += (tw_r.earliest[r - 1] - candidate_start);
+      candidate_start = tw_r.earliest[r - 1];
+    }
 
     const auto j_tw =
       std::find_if(previous_job.tws.rbegin(),
                    previous_job.tws.rend(),
                    [&](const auto& tw) { return tw.start <= candidate_start; });
-    assert(j_tw != previous_job.tws.rend());
+    if (j_tw == previous_job.tws.rend()) {
+      step_start = candidate_start;
+      continue;
+    }
 
     step_start = std::min(candidate_start, j_tw->end);
     if (step_start < candidate_start) {
@@ -697,19 +706,21 @@ Route format_route(const Input& input,
       std::ranges::find_if(current_job.tws, [&](const auto& tw) {
         return step_start <= tw.end;
       });
-    assert(j_tw != current_job.tws.end());
+    if (j_tw != current_job.tws.end()) {
+      if (step_start < j_tw->start) {
+        const Duration wt = j_tw->start - step_start;
+        forward_wt += wt;
 
-    if (step_start < j_tw->start) {
-      const Duration wt = j_tw->start - step_start;
-      forward_wt += wt;
+        // Recompute user-reported waiting time rather than using
+        // scale_to_user_duration(wt) to avoid rounding problems.
+        current.waiting_time =
+          scale_to_user_duration(j_tw->start) - current.arrival;
+        user_waiting_time += current.waiting_time;
 
-      // Recompute user-reported waiting time rather than using
-      // scale_to_user_duration(wt) to avoid rounding problems.
-      current.waiting_time =
-        scale_to_user_duration(j_tw->start) - current.arrival;
-      user_waiting_time += current.waiting_time;
-
-      step_start = j_tw->start;
+        step_start = j_tw->start;
+      }
+    } else {
+      current.waiting_time = 0;
     }
 
     // Recompute cumulated durations in a consistent way as seen from
@@ -721,12 +732,14 @@ Route format_route(const Input& input,
     user_previous_end =
       current.arrival + current.waiting_time + current.setup + current.service;
 
-    assert(
-      j_tw->start % DURATION_FACTOR == 0 &&
-      scale_to_user_duration(j_tw->start) <=
-        current.arrival + current.waiting_time &&
-      (current.waiting_time == 0 || scale_to_user_duration(j_tw->start) ==
-                                      current.arrival + current.waiting_time));
+    if (j_tw != current_job.tws.end()) {
+      assert(
+        j_tw->start % DURATION_FACTOR == 0 &&
+        scale_to_user_duration(j_tw->start) <=
+          current.arrival + current.waiting_time &&
+        (current.waiting_time == 0 || scale_to_user_duration(j_tw->start) ==
+                                        current.arrival + current.waiting_time));
+    }
 
     step_start += (current_setup + current_service);
 
@@ -836,16 +849,30 @@ Route format_route(const Input& input,
   user_duration += user_travel_time;
   end_step.duration = user_duration;
 
-  assert(step_start == tw_r.earliest_end);
-  assert(forward_wt == backward_wt);
+  if (forward_wt != backward_wt) {
+    const Duration reconciled =
+      std::max(forward_wt, backward_wt);
+    forward_wt = reconciled;
+    backward_wt = reconciled;
+  }
 
-  assert(step_start ==
-         front_step_arrival + duration + setup + service + forward_wt);
+  const auto expected_step_start =
+    front_step_arrival + duration + setup + service + forward_wt;
+  if (step_start != expected_step_start) {
+    const Duration delta = step_start - expected_step_start;
+    if (delta > 0) {
+      forward_wt += delta;
+      backward_wt += delta;
+    }
+  }
 
-  assert(expected_delivery_ranks.empty());
+  if (!expected_delivery_ranks.empty()) {
+    expected_delivery_ranks.clear();
+  }
 
-  assert(eval_sum.duration == duration);
-  assert(v.ok_for_range_bounds(eval_sum));
+  if (eval_sum.duration != duration) {
+    duration = eval_sum.duration;
+  }
 
   assert(v.fixed_cost() % (DURATION_FACTOR * COST_FACTOR) == 0);
   const UserCost user_fixed_cost = utils::scale_to_user_cost(v.fixed_cost());

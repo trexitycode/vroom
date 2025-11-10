@@ -21,29 +21,60 @@ struct Eval {
   Duration duration;
   Distance distance;
 
+  template <typename T>
+  static constexpr T saturating_add(T lhs, T rhs) {
+    if (rhs > 0 &&
+        lhs > std::numeric_limits<T>::max() - rhs) {
+      return std::numeric_limits<T>::max();
+    }
+    if (rhs < 0 &&
+        lhs < std::numeric_limits<T>::min() - rhs) {
+      return std::numeric_limits<T>::min();
+    }
+    return lhs + rhs;
+  }
+
+  template <typename T>
+  static constexpr T saturating_sub(T lhs, T rhs) {
+    return saturating_add(lhs, static_cast<T>(-rhs));
+  }
+
+  template <typename T>
+  static constexpr T saturating_neg(T value) {
+    if (value == std::numeric_limits<T>::min()) {
+      return std::numeric_limits<T>::max();
+    }
+    if (value == std::numeric_limits<T>::max()) {
+      return std::numeric_limits<T>::min();
+    }
+    return static_cast<T>(-value);
+  }
+
   constexpr Eval() : cost(0), duration(0), distance(0){};
 
   constexpr Eval(Cost cost, Duration duration = 0, Distance distance = 0)
     : cost(cost), duration(duration), distance(distance){};
 
   Eval& operator+=(const Eval& rhs) {
-    cost += rhs.cost;
-    duration += rhs.duration;
-    distance += rhs.distance;
+    cost = saturating_add(cost, rhs.cost);
+    duration = saturating_add(duration, rhs.duration);
+    distance = saturating_add(distance, rhs.distance);
 
     return *this;
   }
 
   Eval& operator-=(const Eval& rhs) {
-    cost -= rhs.cost;
-    duration -= rhs.duration;
-    distance -= rhs.distance;
+    cost = saturating_sub(cost, rhs.cost);
+    duration = saturating_sub(duration, rhs.duration);
+    distance = saturating_sub(distance, rhs.distance);
 
     return *this;
   }
 
   Eval operator-() const {
-    return {-cost, -duration, -distance};
+    return {saturating_neg(cost),
+            saturating_neg(duration),
+            saturating_neg(distance)};
   }
 
   friend Eval operator+(Eval lhs, const Eval& rhs) {

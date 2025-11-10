@@ -186,24 +186,47 @@ template <class Route> struct UnassignedCosts {
   }
 
   double get_insertion_lower_bound(Index j) {
-    return static_cast<double>(min_route_to_unassigned[j] +
-                               min_unassigned_to_route[j] - max_edge_cost);
+    const auto sentinel = std::numeric_limits<Cost>::max();
+    if (min_route_to_unassigned[j] == sentinel ||
+        min_unassigned_to_route[j] == sentinel || max_edge_cost == sentinel) {
+      return std::numeric_limits<double>::infinity();
+    }
+
+    return static_cast<double>(min_route_to_unassigned[j]) +
+           static_cast<double>(min_unassigned_to_route[j]) -
+           static_cast<double>(max_edge_cost);
   }
 
   double get_pd_insertion_lower_bound(const Input& input, Index p) {
     assert(input.jobs[p].type == JOB_TYPE::PICKUP);
 
+    const auto sentinel = std::numeric_limits<Cost>::max();
+    const bool missing_pickup =
+      (min_route_to_unassigned[p] == sentinel ||
+       min_unassigned_to_route[p] == sentinel);
+    const bool missing_delivery =
+      (min_route_to_unassigned[p + 1] == sentinel ||
+       min_unassigned_to_route[p + 1] == sentinel);
+    if (missing_pickup || missing_delivery || max_edge_cost == sentinel) {
+      return std::numeric_limits<double>::infinity();
+    }
+
     // Situation where pickup and delivery are not inserted in a row.
-    const auto apart_insertion = static_cast<double>(
-      min_route_to_unassigned[p] + min_unassigned_to_route[p] +
-      min_route_to_unassigned[p + 1] + min_unassigned_to_route[p + 1] -
-      2 * max_edge_cost);
+    const auto apart_insertion =
+      static_cast<double>(min_route_to_unassigned[p]) +
+      static_cast<double>(min_unassigned_to_route[p]) +
+      static_cast<double>(min_route_to_unassigned[p + 1]) +
+      static_cast<double>(min_unassigned_to_route[p + 1]) -
+      2.0 * static_cast<double>(max_edge_cost);
 
     // Situation where delivery is inserted next to the pickup.
-    const auto next_insertion = static_cast<double>(
-      min_route_to_unassigned[p] + min_unassigned_to_route[p + 1] +
-      vehicle.eval(input.jobs[p].index(), input.jobs[p + 1].index()).cost -
-      max_edge_cost);
+    const auto next_insertion =
+      static_cast<double>(min_route_to_unassigned[p]) +
+      static_cast<double>(min_unassigned_to_route[p + 1]) +
+      static_cast<double>(vehicle.eval(input.jobs[p].index(),
+                                       input.jobs[p + 1].index())
+                            .cost) -
+      static_cast<double>(max_edge_cost);
 
     return std::min(apart_insertion, next_insertion);
   }

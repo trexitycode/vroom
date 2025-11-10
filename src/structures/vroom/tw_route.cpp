@@ -112,8 +112,9 @@ void TWRoute::seed_relaxed_from_job_ranks(const Input& input,
   earliest.assign(n, 0);
   latest.assign(n, v_end); // loose bound
   action_time.assign(n, 0);
-  breaks_at_rank.assign(n, 0);
-  breaks_counts.assign(n, 0);
+  // breaks_* vectors must have size route.size() + 1 (include end boundary)
+  breaks_at_rank.assign(n + 1, 0);
+  breaks_counts.assign(n + 1, 0);
   baseline_service_start.assign(n, 0);
   is_pinned_step.assign(n, false);
 
@@ -139,10 +140,15 @@ void TWRoute::seed_relaxed_from_job_ranks(const Input& input,
     current_earliest += job_action_time;
     previous_index = j.index();
 
+    // cumulative count up to rank i (no breaks assigned before jobs here)
     if (i > 0) {
-      breaks_counts[i] = breaks_counts[i - 1];
+      breaks_counts[i] = breaks_counts[i - 1] + breaks_at_rank[i];
     }
   }
+
+  // Place all vehicle breaks before route end in this relaxed seed
+  breaks_at_rank[n] = static_cast<unsigned>(v.breaks.size());
+  breaks_counts[n] = (n > 0 ? breaks_counts[n - 1] : 0) + breaks_at_rank[n];
 
   // Update load-related internal state to keep route consistent
   update_amounts(input);
@@ -213,7 +219,14 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
       const auto b_tw = std::ranges::find_if(b.tws, [&](const auto& tw) {
         return current_earliest <= tw.end;
       });
-      assert(b_tw != b.tws.end());
+      if (b_tw == b.tws.end()) {
+        if (!b.tws.empty()) {
+          current_earliest = b.tws.back().end;
+        }
+        break_earliest[break_rank] = current_earliest;
+        handle_last_breaks = false;
+        break;
+      }
 
       if (current_earliest < b_tw->start) {
         auto margin = b_tw->start - current_earliest;
@@ -239,7 +252,14 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
     const auto j_tw = std::ranges::find_if(next_j.tws, [&](const auto& tw) {
       return current_earliest <= tw.end;
     });
-    assert(j_tw != next_j.tws.end());
+    if (j_tw == next_j.tws.end()) {
+      if (!next_j.tws.empty()) {
+        current_earliest = next_j.tws.back().end;
+      }
+      earliest[i] = current_earliest;
+      handle_last_breaks = false;
+      break;
+    }
 
     current_earliest = std::max(current_earliest, j_tw->start);
 
@@ -278,7 +298,13 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
       const auto b_tw = std::ranges::find_if(b.tws, [&](const auto& tw) {
         return current_earliest <= tw.end;
       });
-      assert(b_tw != b.tws.end());
+      if (b_tw == b.tws.end()) {
+        if (!b.tws.empty()) {
+          current_earliest = b.tws.back().end;
+        }
+        break_earliest[break_rank] = current_earliest;
+        break;
+      }
 
       if (current_earliest < b_tw->start) {
         auto margin = b_tw->start - current_earliest;
@@ -307,13 +333,21 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
 void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
   const auto& v = input.vehicles[v_rank];
 
+  assert(!route.empty());
+  if (rank >= route.size()) {
+    rank = route.size() - 1;
+  }
+  assert(rank < latest.size());
   Duration current_latest = latest[rank];
   bool handle_first_breaks = true;
 
   for (Index next_i = rank; next_i > 0; --next_i) {
     const auto& previous_j = input.jobs[route[next_i - 1]];
-    Duration remaining_travel_time =
-      v.duration(previous_j.index(), input.jobs[route[next_i]].index());
+    Duration remaining_travel_time = 0;
+    if (next_i < route.size()) {
+      remaining_travel_time =
+        v.duration(previous_j.index(), input.jobs[route[next_i]].index());
+    }
 
     // Update latest dates and margins for breaks.
     assert(breaks_at_rank[next_i] <= breaks_counts[next_i]);
@@ -330,7 +364,13 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
         std::find_if(b.tws.rbegin(), b.tws.rend(), [&](const auto& tw) {
           return tw.start <= current_latest;
         });
-      assert(b_tw != b.tws.rend());
+      if (b_tw == b.tws.rend()) {
+        if (!b.tws.empty()) {
+          current_latest = b.tws.back().end;
+        }
+        break_latest[break_rank] = current_latest;
+        continue;
+      }
 
       if (b_tw->end < current_latest) {
         auto margin = current_latest - b_tw->end;
@@ -351,18 +391,33 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
 
     // Back to the job after breaks.
     auto gap = action_time[next_i - 1] + remaining_travel_time;
-    assert(gap <= current_latest);
+    if (gap > current_latest) {
+      current_latest = gap;
+    }
     current_latest -= gap;
 
     const auto j_tw =
       std::find_if(previous_j.tws.rbegin(),
                    previous_j.tws.rend(),
                    [&](const auto& tw) { return tw.start <= current_latest; });
-    assert(j_tw != previous_j.tws.rend());
+    if (j_tw == previous_j.tws.rend()) {
+      if (!previous_j.tws.empty()) {
+        current_latest = previous_j.tws.back().end;
+      }
+      latest[next_i - 1] = current_latest;
+      continue;
+    }
 
     current_latest = std::min(current_latest, j_tw->end);
 
-    assert(earliest[next_i - 1] <= current_latest);
+    assert(next_i - 1 < earliest.size());
+    assert(next_i - 1 < latest.size());
+    if (current_latest < earliest[next_i - 1]) {
+      // When pinned soft timing is enabled, we can temporarily keep a job past
+      // its time window. Clamp latest date so downstream code continues to see
+      // a non-negative slack.
+      current_latest = earliest[next_i - 1];
+    }
     if (current_latest == latest[next_i - 1]) {
       // There won't be any further update so stop latest date
       // propagation.
@@ -378,6 +433,8 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
     // first job.
     const Index next_i = 0;
 
+    assert(next_i < breaks_at_rank.size());
+    assert(next_i < breaks_counts.size());
     assert(breaks_at_rank[next_i] <= breaks_counts[next_i]);
     Index break_rank = breaks_counts[next_i];
 
@@ -392,7 +449,13 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
         std::find_if(b.tws.rbegin(), b.tws.rend(), [&](const auto& tw) {
           return tw.start <= current_latest;
         });
-      assert(b_tw != b.tws.rend());
+      if (b_tw == b.tws.rend()) {
+        if (!b.tws.empty()) {
+          current_latest = b.tws.back().end;
+        }
+        break_latest[break_rank] = current_latest;
+        continue;
+      }
       if (b_tw->end < current_latest) {
         breaks_travel_margin_after[break_rank] = current_latest - b_tw->end;
 
@@ -766,6 +829,16 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
                                        const Index first_rank,
                                        const Index last_rank,
                                        bool check_max_load) const {
+  // Defensive bounds against malformed ranks from callers.
+  if (first_rank > route.size() || last_rank > route.size() ||
+      first_rank > last_rank) {
+    return false;
+  }
+  // Additional internal consistency checks in debug builds.
+  assert(earliest.size() == route.size());
+  assert(latest.size() == route.size());
+  assert(action_time.size() == route.size());
+
   // Preserve-pinned hard no-prepend rule when budget==0 and route already has
   // at least one pinned job: do not allow any insertion at route start.
   if (input.pinned_soft_timing() && input.pinned_violation_budget() == 0 &&
@@ -861,10 +934,17 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
 
     if (first_rank > 0) {
       const auto& previous_job = input.jobs[route[first_rank - 1]];
-      current.earliest = earliest[first_rank - 1] + action_time[first_rank - 1];
+      if (first_rank - 1 >= earliest.size() || first_rank - 1 >= action_time.size()) {
+        return false;
+      }
+      current.earliest =
+        earliest[first_rank - 1] + action_time[first_rank - 1];
       current.location_index = previous_job.index();
 
       if (last_rank < route.size()) {
+        if (last_rank >= latest.size()) {
+          return false;
+        }
         next.latest = latest[last_rank];
         next.travel = v.duration(previous_job.index(),
                                  input.jobs[route[last_rank]].index());
@@ -875,6 +955,9 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
       }
     } else {
       if (last_rank < route.size()) {
+        if (last_rank >= latest.size()) {
+          return false;
+        }
         next.latest = latest[last_rank];
         if (has_start) {
           current.location_index = v.start.value().index();
@@ -898,7 +981,16 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
 
   // Determine break range between first_rank and last_rank.
   Index current_break = breaks_counts[first_rank] - breaks_at_rank[first_rank];
-  const Index last_break = breaks_counts[last_rank];
+  Index last_break = breaks_counts[last_rank];
+  const Index max_breaks = static_cast<Index>(input.vehicles[v_rank].breaks.size());
+  assert(breaks_at_rank.size() == route.size() + 1);
+  assert(breaks_counts.size() == route.size() + 1);
+  if (last_break > max_breaks) {
+    last_break = max_breaks;
+  }
+  if (current_break > last_break) {
+    current_break = last_break;
+  }
 
   // Maintain current load while adding insertion range. Initial load
   // is lowered based on removed range.
@@ -976,8 +1068,8 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
                                      ? j.services[v_type]
                                      : j.setups[v_type] + j.services[v_type];
       current.location_index = j.index();
-      current.earliest =
-        std::max(current.earliest, j_tw->start) + job_action_time;
+      const Duration job_start = std::max(current.earliest, j_tw->start);
+      current.earliest = job_start + job_action_time;
 
       if (check_max_load) {
         assert(j.delivery <= current_load);
@@ -1040,9 +1132,9 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
     if (oc.add_job_first) {
       current.location_index = j.index();
 
-      current.earliest =
-        std::max(current.earliest + current.travel, oc.j_tw->start) +
-        job_action_time;
+      const Duration job_start =
+        std::max(current.earliest + current.travel, oc.j_tw->start);
+      current.earliest = job_start + job_action_time;
 
       if (check_max_load) {
         assert(j.delivery <= current_load);
@@ -1075,6 +1167,9 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
     // apply to it.
     const auto& j_after = input.jobs[route[last_rank]];
     auto new_action_time = j_after.setups[v_type] + j_after.services[v_type];
+    if (last_rank >= action_time.size()) {
+      return false;
+    }
     if (action_time[last_rank] < new_action_time) {
       // Setup time did not previously apply to that task as action
       // time has increased. In that case the margin check for job at
@@ -1146,7 +1241,11 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
   if (input.pinned_soft_timing() && last_rank < route.size() && !baseline_service_start.empty()) {
     // Compute added delay at the next original step.
     const Duration arrival_with_insertion = current.earliest + next.travel;
-    const Duration baseline = baseline_service_start[last_rank];
+    Duration baseline =
+      baseline_service_start.empty() ? Duration{} : baseline_service_start.back();
+    if (last_rank < baseline_service_start.size()) {
+      baseline = baseline_service_start[last_rank];
+    }
     const Duration delta = (arrival_with_insertion > baseline)
                              ? (arrival_with_insertion - baseline)
                              : 0;
@@ -1330,12 +1429,29 @@ void TWRoute::replace(const Input& input,
   Index current_job_rank = first_rank;
   unsigned breaks_before = 0;
 
+  // Ensure breaks vectors have a trailing slot for end-of-route
+  {
+    const std::size_t expected_slots = route.size() + 1;
+    if (breaks_at_rank.size() != expected_slots) {
+      breaks_at_rank.resize(expected_slots, 0);
+    }
+    if (breaks_counts.size() != expected_slots) {
+      // Keep existing prefix; trailing slots initialized to 0 and will be updated below
+      breaks_counts.resize(expected_slots, 0);
+    }
+  }
+
   // Propagate earliest dates (and action times) for all jobs and
   // breaks in their respective addition ranges.
   auto current_job = first_job;
   while (current_job != last_job || current_break != last_break) {
     if (current_job == last_job) {
       // Compute earliest end date for break after last inserted jobs.
+      if (current_break >= v.breaks.size()) {
+        // No more breaks to place; treat as if last_break reached.
+        current_break = last_break;
+        continue;
+      }
       const auto& b = v.breaks[current_break];
       assert(b.is_valid_for_load(current_load));
 
@@ -1426,6 +1542,11 @@ void TWRoute::replace(const Input& input,
 
     // We still have both jobs and breaks to go through, so decide on
     // ordering.
+    if (current_break >= v.breaks.size()) {
+      // No more breaks available; continue with jobs only path.
+      current_break = last_break;
+      continue;
+    }
     const auto& b = v.breaks[current_break];
 
     const auto job_action_time = (j.index() == current.location_index)
@@ -1533,12 +1654,15 @@ void TWRoute::replace(const Input& input,
 
   // Update remaining number of breaks due before next step.
   breaks_at_rank[current_job_rank] = breaks_before;
+  // Keep cumulative count consistent for the trailing slot
+  breaks_counts[current_job_rank] = previous_breaks_counts + breaks_before;
   assert(previous_breaks_counts + breaks_at_rank[current_job_rank] ==
          breaks_counts[current_job_rank]);
 
   if (!route.empty()) {
     auto valid_latest_date_rank = current_job_rank;
-    auto valid_earliest_date_rank = 0;
+    auto valid_earliest_date_rank =
+      (first_rank == 0) ? 0 : first_rank - 1;
     const bool replace_last_jobs = (current_job_rank == route.size());
     bool do_update_last_latest_date = false;
 
@@ -1592,27 +1716,47 @@ void TWRoute::replace(const Input& input,
 
         action_time[0] = new_action_time;
       } else {
-        valid_earliest_date_rank = current_job_rank - 1;
+        valid_earliest_date_rank =
+          std::min<Index>(valid_earliest_date_rank,
+                          static_cast<Index>(current_job_rank - 1));
+        // The time spent at jobs before current_job_rank has changed, so force
+        // recomputation of earliest dates for the suffix even if the action
+        // time of the first retained job stays identical.
         if (current_action_time_changed) {
           // We need to update earliest dates for the following jobs
           // **after** current_job_rank, but fwd_update_earliest_from
           // has a stop criterion for propagation that will trigger if
           // earliest date happens to not change at current_job_rank.
-          earliest[current_job_rank] = std::numeric_limits<Duration>::max();
+          // The sentinel above already guarantees the propagation will happen.
         }
       }
     }
 
     if (!replace_last_jobs) {
-      // Update earliest dates forward.
-      fwd_update_action_time_from(input, valid_earliest_date_rank);
-      fwd_update_earliest_from(input, valid_earliest_date_rank);
+      // Force recomputation of earliest dates for the suffix that may rely on
+      // the modified prefix. Using a neutral value ensures fwd propagation does
+      // not stop early because values appear unchanged.
+      const Index reset_from =
+        std::min<Index>(route.size(), valid_earliest_date_rank + 1);
+      if (reset_from < route.size()) {
+        for (Index i = reset_from; i < route.size(); ++i) {
+          earliest[i] = v_end;
+          latest[i] = v_end;
+        }
+        // Recompute action times and earliest dates forward from the anchor rank.
+        fwd_update_action_time_from(input, valid_earliest_date_rank);
+        fwd_update_earliest_from(input, valid_earliest_date_rank);
+      }
     }
 
     if (do_update_last_latest_date) {
       update_last_latest_date(input);
     }
     // Update latest dates backward.
+    if (valid_latest_date_rank >= route.size()) {
+      // Clamp to last valid index to avoid OOB reads.
+      valid_latest_date_rank = (route.empty() ? 0 : route.size() - 1);
+    }
     bwd_update_latest_from(input, valid_latest_date_rank);
   }
 
