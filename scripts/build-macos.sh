@@ -10,10 +10,12 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--without-routing] [--keep-stage]
+Usage: $(basename "$0") [--without-routing] [--keep-stage] [--debug] [--asan]
 
 Options:
   --without-routing  Build without routing backends (matrix-only)
+  --debug          Build with debug symbols and no NDEBUG (g, O0, frame pointers)
+  --asan           Add Address/UB sanitizers (implies debug-friendly flags)
   --keep-stage     Keep the staging directory after build (for debugging)
   -h, --help       Show this help
 
@@ -26,9 +28,13 @@ EOF
 
 WITH_ROUTING=true
 KEEP_STAGE=false
+DEBUG_BUILD=false
+WITH_ASAN=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --without-routing) WITH_ROUTING=false; shift ;;
+    --debug)        DEBUG_BUILD=true; shift ;;
+    --asan)         WITH_ASAN=true; shift ;;
     --keep-stage)   KEEP_STAGE=true; shift ;;
     -h|--help)      usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -84,8 +90,20 @@ if [[ "${WITH_ROUTING}" != "true" ]]; then
 else
   DUSE="true"
 fi
-# Match devbox’s -DNDEBUG to avoid assertions in release-like builds
-CXXFLAGS_OVERRIDE="-MMD -MP -I. -std=c++20 -Wextra -Wpedantic -Wall -O3 -DASIO_STANDALONE -DUSE_ROUTING=${DUSE} -DNDEBUG"
+
+# Compose compiler flags
+if [[ "${DEBUG_BUILD}" == "true" ]]; then
+  echo "[build-macos] Building in DEBUG mode"
+  CXXFLAGS_OVERRIDE="-MMD -MP -I. -std=c++20 -Wextra -Wpedantic -Wall -g -O0 -fno-omit-frame-pointer -DASIO_STANDALONE -DUSE_ROUTING=${DUSE}"
+  if [[ "${WITH_ASAN}" == "true" ]]; then
+    echo "[build-macos] Enabling ASAN/UBSAN"
+    CXXFLAGS_OVERRIDE="${CXXFLAGS_OVERRIDE} -fsanitize=address,undefined"
+  fi
+else
+  # Release-like defaults (matches devbox’s -DNDEBUG)
+  CXXFLAGS_OVERRIDE="-MMD -MP -I. -std=c++20 -Wextra -Wpedantic -Wall -O3 -DASIO_STANDALONE -DUSE_ROUTING=${DUSE} -DNDEBUG"
+fi
+
 if [[ "${WITH_ROUTING}" != "true" ]]; then
   echo "[build-macos] Building without routing backends"
   MAKE_FLAGS+=("USE_ROUTING=false" "CXXFLAGS=${CXXFLAGS_OVERRIDE}")
