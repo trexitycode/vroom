@@ -466,6 +466,8 @@ Route format_route(const Input& input,
       current_setup + previous_job.services[v.type] + remaining_travel_time;
 
     if (diff > step_start) {
+      // Soft-timing can let the relaxed schedule drift backwards; adjust the
+      // bookkeeping instead of tripping assertions in release builds.
       backward_wt += (diff - step_start);
       step_start = diff;
     }
@@ -549,6 +551,8 @@ Route format_route(const Input& input,
   UserDuration user_previous_end = steps.back().arrival;
 
 #ifndef NDEBUG
+  // Track the initial arrival so we can sanity-check cumulative timing at the
+  // end, even when soft-pinned adjustments nudge intermediate steps.
   const auto front_step_arrival = step_start;
 #endif
 
@@ -850,12 +854,16 @@ Route format_route(const Input& input,
   end_step.duration = user_duration;
 
   if (forward_wt != backward_wt) {
-    const Duration reconciled =
-      std::max(forward_wt, backward_wt);
+    // Keep user-facing totals consistent even when soft-pins forced us to
+    // rebalance time forward vs. backward.
+    const Duration reconciled = std::max(forward_wt, backward_wt);
     forward_wt = reconciled;
     backward_wt = reconciled;
   }
 
+#ifndef NDEBUG
+  // Compare with the accumulated totals captured at the route start. Soft
+  // timing may legally extend the schedule, so treat the slack as extra wait.
   const auto expected_step_start =
     front_step_arrival + duration + setup + service + forward_wt;
   if (step_start != expected_step_start) {
@@ -869,6 +877,7 @@ Route format_route(const Input& input,
   if (!expected_delivery_ranks.empty()) {
     expected_delivery_ranks.clear();
   }
+#endif
 
   if (eval_sum.duration != duration) {
     duration = eval_sum.duration;

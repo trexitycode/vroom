@@ -398,9 +398,9 @@ void Input::add_vehicle(const Vehicle& vehicle) {
     current_v.type = search->second;
   } else {
     const Index rank = _vehicle_types.size();
-    const auto [it, insertion_ok] =
+    [[maybe_unused]] const auto insertion_result =
       _type_to_rank_in_vehicle_types.try_emplace(type, rank);
-    assert(insertion_ok);
+    assert(insertion_result.second);
     _vehicle_types.push_back(type);
     current_v.type = rank;
   }

@@ -189,6 +189,8 @@ template <class Route> struct UnassignedCosts {
     const auto sentinel = std::numeric_limits<Cost>::max();
     if (min_route_to_unassigned[j] == sentinel ||
         min_unassigned_to_route[j] == sentinel || max_edge_cost == sentinel) {
+      // Soft timing / sentinel evals can leave us with "no edge" costs.
+      // Returning +inf keeps pruning logic sound without overflowing.
       return std::numeric_limits<double>::infinity();
     }
 
@@ -208,6 +210,7 @@ template <class Route> struct UnassignedCosts {
       (min_route_to_unassigned[p + 1] == sentinel ||
        min_unassigned_to_route[p + 1] == sentinel);
     if (missing_pickup || missing_delivery || max_edge_cost == sentinel) {
+      // Again, protect the lower-bound math from sentinel overflows.
       return std::numeric_limits<double>::infinity();
     }
 

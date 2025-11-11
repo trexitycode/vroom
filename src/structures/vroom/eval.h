@@ -23,6 +23,9 @@ struct Eval {
 
   template <typename T>
   static constexpr T saturating_add(T lhs, T rhs) {
+      // ASAN/UBSAN will flag the sentinel math we use in heuristics if we let
+      // these overflow. Clamp so debug tooling stays quiet while preserving the
+      // intent (treat NO_EVAL / NO_GAIN as infinities).
     if (rhs > 0 &&
         lhs > std::numeric_limits<T>::max() - rhs) {
       return std::numeric_limits<T>::max();

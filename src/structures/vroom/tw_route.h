@@ -231,7 +231,7 @@ public:
   // Build route directly from job_ranks without applying TW constraints.
   // Used when pinned_soft_timing is enabled to seed an infeasible pinned route.
   void seed_relaxed_from_job_ranks(const Input& input,
-                                   const Amount& single_jobs_delivery,
+                                   const Amount& single_jobs_delivery [[maybe_unused]],
                                    const std::vector<Index>& job_ranks);
 };
 

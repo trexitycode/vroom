@@ -102,7 +102,7 @@ TWRoute::TWRoute(const Input& input, Index v, unsigned amount_size)
 }
 
 void TWRoute::seed_relaxed_from_job_ranks(const Input& input,
-                                          const Amount& single_jobs_delivery,
+                                          const Amount& single_jobs_delivery [[maybe_unused]],
                                           const std::vector<Index>& job_ranks) {
   // Initialize route directly, ignoring time windows. Compute baseline earliest service starts.
   set_route(input, job_ranks);
@@ -112,7 +112,10 @@ void TWRoute::seed_relaxed_from_job_ranks(const Input& input,
   earliest.assign(n, 0);
   latest.assign(n, v_end); // loose bound
   action_time.assign(n, 0);
-  // breaks_* vectors must have size route.size() + 1 (include end boundary)
+  // breaks_* vectors must have size route.size() + 1 (include end boundary).
+  // With soft-timing we routinely reason about the "virtual" step that follows
+  // the last job (to park breaks or push pinned work), so we keep an explicit
+  // sentinel slot instead of relying on undefined behaviour past the array end.
   breaks_at_rank.assign(n + 1, 0);
   breaks_counts.assign(n + 1, 0);
   baseline_service_start.assign(n, 0);
@@ -140,13 +143,15 @@ void TWRoute::seed_relaxed_from_job_ranks(const Input& input,
     current_earliest += job_action_time;
     previous_index = j.index();
 
-    // cumulative count up to rank i (no breaks assigned before jobs here)
+    // Cumulative count up to rank i (no breaks assigned before jobs here).
+    // The sentinel will accumulate the remaining vehicle breaks at the end.
     if (i > 0) {
       breaks_counts[i] = breaks_counts[i - 1] + breaks_at_rank[i];
     }
   }
 
-  // Place all vehicle breaks before route end in this relaxed seed
+  // Place all vehicle breaks before route end in this relaxed seed. Holding the
+  // full count in the sentinel keeps later update loops inside bounds.
   breaks_at_rank[n] = static_cast<unsigned>(v.breaks.size());
   breaks_counts[n] = (n > 0 ? breaks_counts[n - 1] : 0) + breaks_at_rank[n];
 
@@ -220,6 +225,8 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
         return current_earliest <= tw.end;
       });
       if (b_tw == b.tws.end()) {
+        // Soft-pinned slack can push a break beyond every TW. In that case we
+        // keep the best effort (back().end) instead of asserting and aborting.
         if (!b.tws.empty()) {
           current_earliest = b.tws.back().end;
         }
@@ -253,6 +260,8 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
       return current_earliest <= tw.end;
     });
     if (j_tw == next_j.tws.end()) {
+      // Same story for jobs: when soft timing lets us drift beyond the last TW,
+      // clamp to its end so the rest of the propagation code keeps working.
       if (!next_j.tws.empty()) {
         current_earliest = next_j.tws.back().end;
       }
@@ -299,6 +308,8 @@ void TWRoute::fwd_update_earliest_from(const Input& input, Index rank) {
         return current_earliest <= tw.end;
       });
       if (b_tw == b.tws.end()) {
+        // No admissible TW left; stick to the last end value instead of
+        // crashing in release builds.
         if (!b.tws.empty()) {
           current_earliest = b.tws.back().end;
         }
@@ -335,6 +346,8 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
 
   assert(!route.empty());
   if (rank >= route.size()) {
+    // Callers sometimes ask for "after last job" (e.g. soft-pinned overflow).
+    // Clamp the rank to the last valid job before updating buffers.
     rank = route.size() - 1;
   }
   assert(rank < latest.size());
@@ -365,6 +378,8 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
           return tw.start <= current_latest;
         });
       if (b_tw == b.tws.rend()) {
+        // Soft-timing can leave breaks past their allowed windows; clamp to the
+        // last end instead of asserting so we preserve consistency.
         if (!b.tws.empty()) {
           current_latest = b.tws.back().end;
         }
@@ -392,6 +407,7 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
     // Back to the job after breaks.
     auto gap = action_time[next_i - 1] + remaining_travel_time;
     if (gap > current_latest) {
+      // Allow the job to finish late when soft pins already violated the window.
       current_latest = gap;
     }
     current_latest -= gap;
@@ -401,6 +417,8 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
                    previous_j.tws.rend(),
                    [&](const auto& tw) { return tw.start <= current_latest; });
     if (j_tw == previous_j.tws.rend()) {
+      // No window can accommodate the late arrival: use the last TW end so we
+      // keep propagating without crashing.
       if (!previous_j.tws.empty()) {
         current_latest = previous_j.tws.back().end;
       }
@@ -413,6 +431,8 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
     assert(next_i - 1 < earliest.size());
     assert(next_i - 1 < latest.size());
     if (current_latest < earliest[next_i - 1]) {
+      // Downstream code expects non-negative slack; when soft timing lets us run
+      // late we clamp back to earliest to keep invariants intact.
       // When pinned soft timing is enabled, we can temporarily keep a job past
       // its time window. Clamp latest date so downstream code continues to see
       // a non-negative slack.
@@ -450,6 +470,8 @@ void TWRoute::bwd_update_latest_from(const Input& input, Index rank) {
           return tw.start <= current_latest;
         });
       if (b_tw == b.tws.rend()) {
+        // Again: soft-pinned schedules may push us past every TW. Clamp and
+        // continue instead of triggering release crashes.
         if (!b.tws.empty()) {
           current_latest = b.tws.back().end;
         }
@@ -834,7 +856,9 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
       first_rank > last_rank) {
     return false;
   }
-  // Additional internal consistency checks in debug builds.
+  // Additional internal consistency checks in debug builds. Soft timing widens
+  // the range of valid inputs, so we assert on vector sizes rather than relying
+  // on UB in release builds.
   assert(earliest.size() == route.size());
   assert(latest.size() == route.size());
   assert(action_time.size() == route.size());
@@ -979,7 +1003,9 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
     return false;
   }
 
-  // Determine break range between first_rank and last_rank.
+  // Determine break range between first_rank and last_rank. The counts arrays
+  // always include a sentinel slot, so the extra checks above keep callers from
+  // indexing past route.size().
   Index current_break = breaks_counts[first_rank] - breaks_at_rank[first_rank];
   Index last_break = breaks_counts[last_rank];
   const Index max_breaks = static_cast<Index>(input.vehicles[v_rank].breaks.size());
@@ -1068,6 +1094,8 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
                                      ? j.services[v_type]
                                      : j.setups[v_type] + j.services[v_type];
       current.location_index = j.index();
+      // Soft timing may have drifted past the latest TW; use the clamped start
+      // so we stay consistent with the forward propagation.
       const Duration job_start = std::max(current.earliest, j_tw->start);
       current.earliest = job_start + job_action_time;
 
@@ -1132,6 +1160,7 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
     if (oc.add_job_first) {
       current.location_index = j.index();
 
+      // Same clamping story for the "job-first" branch.
       const Duration job_start =
         std::max(current.earliest + current.travel, oc.j_tw->start);
       current.earliest = job_start + job_action_time;
