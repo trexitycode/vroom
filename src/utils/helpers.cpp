@@ -533,7 +533,9 @@ Route format_route(const Input& input,
 
   assert(first_location.has_value() && last_location.has_value());
 
+#ifndef NDEBUG
   std::unordered_set<Index> expected_delivery_ranks;
+#endif
   Amount current_load = tw_r.job_deliveries_sum();
   assert(current_load <= v.capacity);
 
@@ -546,7 +548,9 @@ Route format_route(const Input& input,
   steps.back().arrival = scale_to_user_duration(step_start);
   UserDuration user_previous_end = steps.back().arrival;
 
-  const Duration front_step_arrival = step_start;
+#ifndef NDEBUG
+  const auto front_step_arrival = step_start;
+#endif
 
   auto previous_location = (v.has_start()) ? v.start.value().index()
                                            : std::numeric_limits<Index>::max();
@@ -862,11 +866,9 @@ Route format_route(const Input& input,
     }
   }
 
-#ifndef NDEBUG
   if (!expected_delivery_ranks.empty()) {
     expected_delivery_ranks.clear();
   }
-#endif
 
   if (eval_sum.duration != duration) {
     duration = eval_sum.duration;
