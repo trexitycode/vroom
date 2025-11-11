@@ -347,30 +347,10 @@ inline Eval fill_route(const Input& input,
           const auto current_eval =
             utils::addition_cost(input, job_rank, vehicle, route.route, r);
 
-          // Budget gating for single insertion
-          const Duration action_delta_d =
-            input.include_action_time_in_budget()
-              ? utils::action_time_delta_single(input,
-                                                vehicle,
-                                                route.route,
-                                                job_rank,
-                                                r)
-              : 0;
-          const Cost action_delta_c = input.include_action_time_in_budget()
-                                        ? utils::action_cost_from_duration(
-                                            vehicle, action_delta_d)
-                                        : 0;
-          const Cost budget_added =
-            utils::job_budget(input.jobs[job_rank]);
-          bool budget_ok = true;
-          if (budget_added > 0) {
-            budget_ok = (current_eval.cost + action_delta_c) <= budget_added;
-          }
-
           const double current_cost = static_cast<double>(current_eval.cost) -
             lambda * static_cast<double>(regrets[job_rank]);
 
-          if (budget_ok && current_cost < best_cost &&
+          if (current_cost < best_cost &&
               (vehicle.ok_for_range_bounds(route_eval + current_eval)) &&
               route.is_valid_addition_for_capacity(input,
                                                    current_job.pickup,
@@ -498,45 +478,12 @@ inline Eval fill_route(const Input& input,
               modified_with_pd.pop_back();
 
               if (valid) {
-                // Budget gating for PD insertion
-                Duration action_delta_d = 0;
-                if (input.include_action_time_in_budget()) {
-                  if (delivery_r == pickup_r) {
-                    action_delta_d = utils::action_time_delta_pd_contiguous(input,
-                                                                            vehicle,
-                                                                            job_rank);
-                  } else {
-                    action_delta_d = utils::action_time_delta_pd_general(input,
-                                                                         vehicle,
-                                                                         route.route,
-                                                                         pickup_r,
-                                                                         delivery_r,
-                                                                         job_rank);
-                  }
-                }
-                const Cost action_delta_c =
-                  input.include_action_time_in_budget()
-                    ? utils::action_cost_from_duration(vehicle,
-                                                       action_delta_d)
-                    : 0;
-                const Cost budget_added =
-                  utils::job_budget(input.jobs[job_rank]);
-                bool budget_ok = true;
-                if (budget_added > 0) {
-                  budget_ok =
-                    (current_eval.cost + action_delta_c) <= budget_added;
-                }
-                if (!budget_ok) {
-                  // Not acceptable wrt budget, skip.
-                  // Pop back already handled above.
-                } else {
-                  best_cost = current_cost;
-                  best_job_rank = job_rank;
-                  best_pickup_r = pickup_r;
-                  best_delivery_r = delivery_r;
-                  best_modified_delivery = modified_delivery;
-                  best_eval = current_eval;
-                }
+                best_cost = current_cost;
+                best_job_rank = job_rank;
+                best_pickup_r = pickup_r;
+                best_delivery_r = delivery_r;
+                best_modified_delivery = modified_delivery;
+                best_eval = current_eval;
               }
             }
           }

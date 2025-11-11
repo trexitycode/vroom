@@ -98,6 +98,8 @@ private:
   Index _max_matrices_used_index{0};
   bool _all_locations_have_coords{true};
   std::vector<std::vector<Eval>> _jobs_vehicles_evals;
+  // Repair tuning: max candidate unassigned jobs/shipments to consider for densify
+  unsigned _budget_densify_candidates_k{20};
 
   // Default vehicle type is NO_TYPE, related to the fact that we do
   // not allow empty types as keys for jobs.
@@ -279,6 +281,14 @@ public:
       return std::nullopt;
     }
     return _pinned_last_by_vehicle[v_index];
+  }
+
+  // Repair tuning
+  void set_budget_densify_candidates_k(unsigned v) {
+    _budget_densify_candidates_k = (v == 0 ? 1u : v);
+  }
+  unsigned budget_densify_candidates_k() const {
+    return _budget_densify_candidates_k;
   }
 
   Solution solve(unsigned nb_searches,

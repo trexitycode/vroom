@@ -649,6 +649,13 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
     }
     input.set_include_action_time_in_budget(json_input["include_action_time_in_budget"].GetBool());
   }
+  // Optional densify candidate cap for budget repair
+  if (json_input.HasMember("budget_densify_candidates_k")) {
+    if (!json_input["budget_densify_candidates_k"].IsUint()) {
+      throw InputException("Invalid budget_densify_candidates_k value.");
+    }
+    input.set_budget_densify_candidates_k(json_input["budget_densify_candidates_k"].GetUint());
+  }
 
   if (!json_input.HasMember("vehicles") || !json_input["vehicles"].IsArray()) {
     throw InputException("Invalid vehicles.");

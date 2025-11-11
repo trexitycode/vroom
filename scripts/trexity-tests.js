@@ -212,6 +212,83 @@ const tests = {
     assertJsonEq(r.json, '.summary.unassigned', 0);
     fs.rmSync(t, { recursive: true, force: true });
   },
+  // Route-level budget: over-budget pinned route with no candidates gets dropped entirely
+  async budget_postpass_drops_over_budget_route_no_densify() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: false,
+      vehicles: [{
+        id: 201,
+        start_index: 0,
+        end_index: 0,
+        steps: [
+          { type: 'start' },
+          { type: 'job', id: 1 },
+          { type: 'job', id: 2 },
+          { type: 'end' }
+        ]
+      }],
+      jobs: [
+        { id: 1, location_index: 1, budget: 200, pinned: true, allowed_vehicles: [201] },
+        { id: 2, location_index: 2, budget: 200, pinned: true, allowed_vehicles: [201] }
+      ],
+      // Travel roughly 600 total: 0->1=200, 1->2=200, 2->0=200
+      matrices: { car: { durations: [[0,200,200],[200,0,200],[200,200,0]] } }
+    };
+    const f = writeJSON(t, 'budget_postpass_drop.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.routes', 0);
+    assertJsonEq(json, '.summary.unassigned', 2);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+  // Route-level budget: densify salvages over-budget route by adding a high-yield unassigned job
+  async budget_postpass_densify_salvages_route_with_high_yield_job() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: false,
+      budget_densify_candidates_k: 1,
+      vehicles: [{
+        id: 202,
+        start_index: 0,
+        steps: [
+          { type: 'start' },
+          { type: 'job', id: 1 },
+          { type: 'job', id: 2 },
+          { type: 'end' }
+        ]
+      }],
+      jobs: [
+        { id: 1, location_index: 1, budget: 200, pinned: true, allowed_vehicles: [202] },
+        { id: 2, location_index: 2, budget: 200, pinned: true, allowed_vehicles: [202] },
+        // High budget candidate left unassigned initially, used by densify
+        { id: 3, location_index: 3, budget: 500 }
+      ],
+      // Base route ~600 (0->1=200, 1->2=200, 2->0=200).
+      // Inserting job 3 adds <= 300 so 200+200+500 >= new cost; densify can salvage.
+      matrices: {
+        car: { durations: [
+          // 0,   1,   2,   3
+          [  0, 200, 200, 100 ],
+          [200,   0, 200, 150 ],
+          [200, 200,   0, 150 ],
+          [100, 150, 150,   0 ]
+        ] }
+      }
+    };
+    const f = writeJSON(t, 'budget_postpass_densify_salvage.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.routes', 1);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    // Ensure job 3 was inserted by densify
+    const steps = json.routes[0].steps.filter(s => s.type === 'job');
+    const ids = steps.map(s => s.id).sort((a,b)=>a-b);
+    if (String(ids) !== String([1,2,3])) {
+      throw new Error(`Expected route to include jobs [1,2,3], got [${ids}]`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
   async job_allowed_unassigned() {
     const t = tmpDir();
     const input = {
@@ -916,6 +993,9 @@ async function main() {
     'budget_single_insufficient',
     'budget_shipment_ok',
     'budget_counts_service_and_setup',
+    // New route-level budget repair tests
+    'budget_postpass_drops_over_budget_route_no_densify',
+    'budget_postpass_densify_salvages_route_with_high_yield_job',
     'job_allowed_unassigned',
     'job_pinned_allowed_success',
     'shipment_allowed_unassigned',

@@ -27,6 +27,7 @@ All rights reserved (see LICENSE).
 #include "routing/valhalla_wrapper.h"
 #include "structures/vroom/input/input.h"
 #include "utils/helpers.h"
+#include "utils/budget_repair.h"
 
 namespace vroom {
 
@@ -621,32 +622,8 @@ void Input::set_extra_compatibility() {
         }
       }
 
-      // Budget-based extra compatibility filter (max_cost on job/shipment)
-      if (is_compatible && jobs[j].type == JOB_TYPE::SINGLE) {
-        const auto& vcl = vehicles[v];
-        const Cost budget = utils::job_budget(jobs[j]);
-        if (budget > 0) {
-          Cost travel = 0;
-          const Index j_index = jobs[j].index();
-          if (vcl.has_start()) {
-            travel += vcl.eval(vcl.start.value().index(), j_index).cost;
-          }
-          if (vcl.has_end()) {
-            travel += vcl.eval(j_index, vcl.end.value().index()).cost;
-          }
-          Cost action_c = 0;
-          if (_include_action_time_in_budget) {
-            Duration action_d = 0;
-            std::optional<Index> prev =
-              vcl.has_start() ? std::optional<Index>(vcl.start.value().index())
-                              : std::optional<Index>();
-            action_d += utils::service_for(jobs[j], vcl);
-            action_d += utils::setup_for_prev(jobs[j], vcl, prev);
-            action_c = utils::action_cost_from_duration(vcl, action_d);
-          }
-          is_compatible = (travel + action_c) <= budget;
-        }
-      }
+      // Removed per-job budget compatibility prefilter: budgets are enforced
+      // at the route level during insertions.
 
       _vehicle_to_job_compatibility[v][j] = is_compatible;
       if (is_shipment_pickup) {
@@ -1614,6 +1591,9 @@ Solution Input::solve(const unsigned nb_searches,
 
     sol.summary.computing_times.routing = routing;
   }
+
+  // Post-pass budget enforcement and repair.
+  utils::repair_budget(*this, sol);
 
   return sol;
 }
