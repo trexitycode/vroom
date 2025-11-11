@@ -14,6 +14,7 @@ All rights reserved (see LICENSE).
 #include <mutex>
 #include <numeric>
 #include <ranges>
+#include <semaphore>
 #include <set>
 #include <thread>
 
@@ -223,7 +224,6 @@ protected:
                         &semaphore,
                         &search_time,
                         &parameters,
-                        &timeout,
                         &ep,
                         &ep_m,
                         depth,
