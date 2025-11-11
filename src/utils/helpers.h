@@ -515,12 +515,23 @@ inline Duration action_time_delta_single(const Input& input,
   return delta;
 }
 
+// Forward declaration to allow use in action_time_delta_pd before its definition.
+inline Duration action_time_delta_pd_contiguous(const Input& input,
+                                                const Vehicle& v,
+                                                Index pickup_rank_in_input);
+
 inline Duration action_time_delta_pd(const Input& input,
                                      const Vehicle& v,
                                      const std::vector<Index>& route,
                                      Index pickup_rank_in_input,
                                      Index pickup_insert_rank,
                                      Index delivery_insert_rank) {
+  // Handle contiguous insertion explicitly to avoid invalid indexing when
+  // the route is empty or when both pickup and delivery share the same
+  // insertion position in the original route.
+  if (delivery_insert_rank == pickup_insert_rank) {
+    return action_time_delta_pd_contiguous(input, v, pickup_rank_in_input);
+  }
   Duration delta = 0;
   const Job& p = input.jobs[pickup_rank_in_input];
   const Job& d = input.jobs[pickup_rank_in_input + 1];

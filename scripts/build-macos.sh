@@ -52,13 +52,13 @@ echo "[build-macos] Staging into: ${STAGE_DIR}"
 rm -rf "${STAGE_DIR}"
 mkdir -p "${STAGE_DIR}"
 
-echo "[build-macos] Copying repository to stage..."
-rsync -a --delete \
-  --exclude ".git" \
-  --exclude ".build-macos-stage" \
-  --exclude "build" \
-  --exclude "node_modules" \
-  "${ROOT_DIR}/" "${STAGE_DIR}/"
+echo "[build-macos] Copying repository to stage (tar stream)..."
+(cd "${ROOT_DIR}" && tar -cf - \
+  --exclude .git \
+  --exclude .build-macos-stage \
+  --exclude build \
+  --exclude node_modules \
+  .) | (cd "${STAGE_DIR}" && tar -xf -)
 
 pushd "${STAGE_DIR}" >/dev/null
 
@@ -118,6 +118,16 @@ make "${MAKE_FLAGS[@]}"
 mkdir -p "${OUT_BIN_DIR}"
 cp "${STAGE_DIR}/bin/vroom" "${OUT_BIN}"
 chmod +x "${OUT_BIN}"
+
+# Ensure the output binary runs without AMFI/Gatekeeper issues
+if command -v xattr >/dev/null 2>&1; then
+  echo "[build-macos] Clearing quarantine attribute on output binary (if present)"
+  xattr -dr com.apple.quarantine "${OUT_BIN}" || true
+fi
+if command -v codesign >/dev/null 2>&1; then
+  echo "[build-macos] Ad-hoc signing output binary"
+  codesign --force -s - "${OUT_BIN}" >/dev/null 2>&1 || true
+fi
 
 popd >/dev/null
 
