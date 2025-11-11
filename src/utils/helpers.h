@@ -426,6 +426,245 @@ inline Eval max_edge_eval(const Input& input,
   return max_eval;
 }
 
+// -------- Budget helpers (route-level) --------
+inline Duration setup_for_prev(const Job& job,
+                               const Vehicle& v,
+                               std::optional<Index> prev_index) {
+  if (prev_index.has_value() && prev_index.value() == job.index()) {
+    return 0;
+  }
+  return job.setups[v.type];
+}
+
+inline Duration service_for(const Job& job, const Vehicle& v) {
+  return job.services[v.type];
+}
+
+inline Cost action_cost_from_duration(const Vehicle& v, Duration d) {
+  if (d == 0) {
+    return 0;
+  }
+  const UserDuration ud = utils::scale_to_user_duration(d);
+  const UserCost uc = v.cost_wrapper.user_cost_from_user_metrics(ud, 0);
+  return utils::scale_from_user_cost(uc);
+}
+
+inline Cost job_budget(const Job& j) {
+  // For shipments, budget is counted once on the pickup.
+  if (j.type == JOB_TYPE::DELIVERY) {
+    return 0;
+  }
+  return j.budget;
+}
+
+inline Cost route_budget_sum(const Input& input,
+                             const std::vector<Index>& route) {
+  Cost sum = 0;
+  for (const auto r : route) {
+    sum += job_budget(input.jobs[r]);
+  }
+  return sum;
+}
+
+inline Duration route_action_time_duration(const Input& input,
+                                           const Vehicle& v,
+                                           const std::vector<Index>& route) {
+  if (route.empty()) {
+    return 0;
+  }
+  Duration total = 0;
+  // First job action: setup depends on start or same-location, plus service
+  std::optional<Index> prev =
+    v.has_start() ? std::optional<Index>(v.start.value().index())
+                  : std::optional<Index>();
+  for (std::size_t i = 0; i < route.size(); ++i) {
+    const auto& job = input.jobs[route[i]];
+    total += setup_for_prev(job, v, prev);
+    total += service_for(job, v);
+    prev = job.index();
+  }
+  return total;
+}
+
+inline Duration action_time_delta_single(const Input& input,
+                                         const Vehicle& v,
+                                         const std::vector<Index>& route,
+                                         Index job_rank,
+                                         Index insert_rank) {
+  // Delta action time = setup/service for inserted job
+  //                   + change of setup for the next job (if any)
+  Duration delta = 0;
+  const Job& j = input.jobs[job_rank];
+  std::optional<Index> prev =
+    (insert_rank == 0)
+      ? (v.has_start() ? std::optional<Index>(v.start.value().index())
+                       : std::optional<Index>())
+      : std::optional<Index>(input.jobs[route[insert_rank - 1]].index());
+  delta += setup_for_prev(j, v, prev);
+  delta += service_for(j, v);
+
+  if (insert_rank < route.size()) {
+    const Job& n = input.jobs[route[insert_rank]];
+    // Old setup for n with previous "prev"
+    const Duration old_setup = setup_for_prev(n, v, prev);
+    // New setup with previous now being j
+    const Duration new_setup =
+      setup_for_prev(n, v, std::optional<Index>(j.index()));
+    delta += (new_setup - old_setup);
+  }
+  return delta;
+}
+
+inline Duration action_time_delta_pd(const Input& input,
+                                     const Vehicle& v,
+                                     const std::vector<Index>& route,
+                                     Index pickup_rank_in_input,
+                                     Index pickup_insert_rank,
+                                     Index delivery_insert_rank) {
+  Duration delta = 0;
+  const Job& p = input.jobs[pickup_rank_in_input];
+  const Job& d = input.jobs[pickup_rank_in_input + 1];
+
+  // Pickup insertion
+  std::optional<Index> prev_p =
+    (pickup_insert_rank == 0)
+      ? (v.has_start() ? std::optional<Index>(v.start.value().index())
+                       : std::optional<Index>())
+      : std::optional<Index>(input.jobs[route[pickup_insert_rank - 1]].index());
+  delta += setup_for_prev(p, v, prev_p);
+  delta += service_for(p, v);
+  if (pickup_insert_rank < route.size()) {
+    const Job& next_after_p = input.jobs[route[pickup_insert_rank]];
+    const Duration old_setup_next = setup_for_prev(next_after_p, v, prev_p);
+    const Duration new_setup_next =
+      setup_for_prev(next_after_p, v, std::optional<Index>(p.index()));
+    delta += (new_setup_next - old_setup_next);
+  }
+
+  // Compute delivery insertion index in the route after pickup is inserted.
+  Index delivery_rank_after =
+    (delivery_insert_rank <= pickup_insert_rank) ? delivery_insert_rank
+                                                 : delivery_insert_rank;
+  // If delivery is after pickup position in the original route, the route
+  // has one more element due to pickup; insertion point shifts by +1.
+  if (delivery_insert_rank > pickup_insert_rank) {
+    delivery_rank_after += 1;
+  }
+
+  std::optional<Index> prev_d =
+    (delivery_rank_after == 0)
+      ? (v.has_start() ? std::optional<Index>(v.start.value().index())
+                       : std::optional<Index>())
+      : std::optional<Index>(
+          (delivery_rank_after - 1 < pickup_insert_rank
+             ? input.jobs[route[delivery_rank_after - 1]].index()
+             : (delivery_rank_after - 1 == pickup_insert_rank
+                  ? p.index()
+                  : input.jobs[route[delivery_rank_after - 2]].index())));
+
+  delta += setup_for_prev(d, v, prev_d);
+  delta += service_for(d, v);
+  if (delivery_rank_after < route.size() + 1) {
+    // The route size increased by 1 after pickup
+    Index next_index_in_route_block =
+      (delivery_rank_after <= pickup_insert_rank
+         ? route[delivery_rank_after]
+         : (delivery_rank_after == pickup_insert_rank + 1
+              ? (delivery_rank_after < route.size() + 1 ? route[delivery_rank_after - 1] : route.back())
+              : route[delivery_rank_after - 1]));
+    const Job& next_after_d = input.jobs[next_index_in_route_block];
+    const Duration old_setup_next =
+      setup_for_prev(next_after_d, v, prev_d);
+    const Duration new_setup_next =
+      setup_for_prev(next_after_d, v, std::optional<Index>(d.index()));
+    delta += (new_setup_next - old_setup_next);
+  }
+
+  return delta;
+}
+
+inline Duration action_time_delta_pd_contiguous(const Input& input,
+                                                const Vehicle& v,
+                                                Index pickup_rank_in_input) {
+  const Job& p = input.jobs[pickup_rank_in_input];
+  const Job& d = input.jobs[pickup_rank_in_input + 1];
+  Duration delta = 0;
+  std::optional<Index> prev =
+    v.has_start() ? std::optional<Index>(v.start.value().index())
+                  : std::optional<Index>();
+  delta += setup_for_prev(p, v, prev);
+  delta += service_for(p, v);
+  // delivery setup with previous being pickup (contiguous insertion)
+  delta += setup_for_prev(d, v, std::optional<Index>(p.index()));
+  delta += service_for(d, v);
+  return delta;
+}
+
+// General PD action delta for non-contiguous placements (delivery after pickup
+// with potential gap). Uses original route indices for pickup_insert_rank and
+// delivery_insert_rank (before any insertion).
+inline Duration action_time_delta_pd_general(const Input& input,
+                                             const Vehicle& v,
+                                             const std::vector<Index>& route,
+                                             Index pickup_insert_rank,
+                                             Index delivery_insert_rank,
+                                             Index pickup_rank_in_input) {
+  assert(delivery_insert_rank >= pickup_insert_rank);
+  // If delivery is directly after pickup, delegate to contiguous case.
+  if (delivery_insert_rank == pickup_insert_rank) {
+    return action_time_delta_pd_contiguous(input, v, pickup_rank_in_input);
+  }
+
+  const Job& p = input.jobs[pickup_rank_in_input];
+  const Job& d = input.jobs[pickup_rank_in_input + 1];
+  Duration delta = 0;
+
+  // Pickup insertion effects.
+  std::optional<Index> prev_p =
+    (pickup_insert_rank == 0)
+      ? (v.has_start() ? std::optional<Index>(v.start.value().index())
+                       : std::optional<Index>())
+      : std::optional<Index>(input.jobs[route[pickup_insert_rank - 1]].index());
+  delta += setup_for_prev(p, v, prev_p);
+  delta += service_for(p, v);
+
+  // Next after pickup setup change.
+  if (pickup_insert_rank < route.size()) {
+    const auto next_after_p = input.jobs[route[pickup_insert_rank]];
+    const Duration old_setup_next_p = setup_for_prev(next_after_p, v, prev_p);
+    const Duration new_setup_next_p =
+      setup_for_prev(next_after_p, v, std::optional<Index>(p.index()));
+    delta += (new_setup_next_p - old_setup_next_p);
+  }
+
+  // Delivery insertion effects (non-contiguous).
+  // Previous before delivery in original route is the element at rd-1 (or start).
+  std::optional<Index> prev_d =
+    (delivery_insert_rank == 0)
+      ? (v.has_start() ? std::optional<Index>(v.start.value().index())
+                       : std::optional<Index>())
+      : std::optional<Index>(input.jobs[route[delivery_insert_rank - 1]].index());
+  delta += setup_for_prev(d, v, prev_d);
+  delta += service_for(d, v);
+
+  // Next after delivery setup change.
+  if (delivery_insert_rank < route.size()) {
+    const auto next_after_d = input.jobs[route[delivery_insert_rank]];
+    const std::optional<Index> old_prev_next_d =
+      (delivery_insert_rank == 0)
+        ? (v.has_start() ? std::optional<Index>(v.start.value().index())
+                         : std::optional<Index>())
+        : std::optional<Index>(input.jobs[route[delivery_insert_rank - 1]].index());
+    const Duration old_setup_next_d =
+      setup_for_prev(next_after_d, v, old_prev_next_d);
+    const Duration new_setup_next_d =
+      setup_for_prev(next_after_d, v, std::optional<Index>(d.index()));
+    delta += (new_setup_next_d - old_setup_next_d);
+  }
+
+  return delta;
+}
+
 // Helper function for SwapStar operator, computing part of the eval
 // for in-place replacing of job at rank in route with job at
 // job_rank.

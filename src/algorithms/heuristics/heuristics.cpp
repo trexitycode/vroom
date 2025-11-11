@@ -124,16 +124,43 @@ inline void seed_route(const Input& input,
   }
 
   if (init_ok) {
+    // Budget gating at seed time.
+    Cost route_budget_sum = 0;
+    Cost route_action_cost = 0;
+    const bool include_actions = input.include_action_time_in_budget();
+    const auto& v = vehicle;
+    const auto eval_seed = evals[best_job_rank][v_rank];
+    bool allowed = true;
     if (input.jobs[best_job_rank].type == JOB_TYPE::SINGLE) {
-      route.add(input, best_job_rank, 0);
-      unassigned.erase(best_job_rank);
+      const Duration action_delta_d =
+        include_actions ? utils::action_time_delta_single(input, v, route.route, best_job_rank, 0) : 0;
+      const Cost action_delta_c = include_actions ? utils::action_cost_from_duration(v, action_delta_d) : 0;
+      const Cost budget_added = utils::job_budget(input.jobs[best_job_rank]);
+      if (route_budget_sum > 0 || budget_added > 0) {
+        allowed = (eval_seed.cost + route_action_cost + action_delta_c) <=
+                  (route_budget_sum + budget_added);
+      }
+      if (allowed) {
+        route.add(input, best_job_rank, 0);
+        unassigned.erase(best_job_rank);
+      }
     }
-    if (input.jobs[best_job_rank].type == JOB_TYPE::PICKUP) {
-      std::vector<Index> p_d(
-        {best_job_rank, static_cast<Index>(best_job_rank + 1)});
-      route.replace(input, input.zero_amount(), p_d.begin(), p_d.end(), 0, 0);
-      unassigned.erase(best_job_rank);
-      unassigned.erase(best_job_rank + 1);
+    if (allowed && input.jobs[best_job_rank].type == JOB_TYPE::PICKUP) {
+      const Duration action_delta_d =
+        include_actions ? utils::action_time_delta_pd(input, v, route.route, best_job_rank, 0, 0) : 0;
+      const Cost action_delta_c = include_actions ? utils::action_cost_from_duration(v, action_delta_d) : 0;
+      const Cost budget_added = utils::job_budget(input.jobs[best_job_rank]);
+      if (route_budget_sum > 0 || budget_added > 0) {
+        allowed = (eval_seed.cost + route_action_cost + action_delta_c) <=
+                  (route_budget_sum + budget_added);
+      }
+      if (allowed) {
+        std::vector<Index> p_d(
+          {best_job_rank, static_cast<Index>(best_job_rank + 1)});
+        route.replace(input, input.zero_amount(), p_d.begin(), p_d.end(), 0, 0);
+        unassigned.erase(best_job_rank);
+        unassigned.erase(best_job_rank + 1);
+      }
     }
   }
 }
@@ -268,6 +295,14 @@ inline Eval fill_route(const Input& input,
 
   const bool init_route_is_empty = route.empty();
   Eval route_eval = utils::route_eval_for_vehicle(input, v_rank, route.route);
+  // Budget tracking for this route
+  Cost route_action_cost = input.include_action_time_in_budget()
+                             ? utils::action_cost_from_duration(
+                                 vehicle,
+                                 utils::route_action_time_duration(input,
+                                                                   vehicle,
+                                                                   route.route))
+                             : 0;
 
   // Store bounds to be able to cut out some loops.
   UnassignedCosts unassigned_costs(input, route, unassigned);
@@ -312,11 +347,30 @@ inline Eval fill_route(const Input& input,
           const auto current_eval =
             utils::addition_cost(input, job_rank, vehicle, route.route, r);
 
-          const double current_cost =
-            static_cast<double>(current_eval.cost) -
+          // Budget gating for single insertion
+          const Duration action_delta_d =
+            input.include_action_time_in_budget()
+              ? utils::action_time_delta_single(input,
+                                                vehicle,
+                                                route.route,
+                                                job_rank,
+                                                r)
+              : 0;
+          const Cost action_delta_c = input.include_action_time_in_budget()
+                                        ? utils::action_cost_from_duration(
+                                            vehicle, action_delta_d)
+                                        : 0;
+          const Cost budget_added =
+            utils::job_budget(input.jobs[job_rank]);
+          bool budget_ok = true;
+          if (budget_added > 0) {
+            budget_ok = (current_eval.cost + action_delta_c) <= budget_added;
+          }
+
+          const double current_cost = static_cast<double>(current_eval.cost) -
             lambda * static_cast<double>(regrets[job_rank]);
 
-          if (current_cost < best_cost &&
+          if (budget_ok && current_cost < best_cost &&
               (vehicle.ok_for_range_bounds(route_eval + current_eval)) &&
               route.is_valid_addition_for_capacity(input,
                                                    current_job.pickup,
@@ -444,12 +498,45 @@ inline Eval fill_route(const Input& input,
               modified_with_pd.pop_back();
 
               if (valid) {
-                best_cost = current_cost;
-                best_job_rank = job_rank;
-                best_pickup_r = pickup_r;
-                best_delivery_r = delivery_r;
-                best_modified_delivery = modified_delivery;
-                best_eval = current_eval;
+                // Budget gating for PD insertion
+                Duration action_delta_d = 0;
+                if (input.include_action_time_in_budget()) {
+                  if (delivery_r == pickup_r) {
+                    action_delta_d = utils::action_time_delta_pd_contiguous(input,
+                                                                            vehicle,
+                                                                            job_rank);
+                  } else {
+                    action_delta_d = utils::action_time_delta_pd_general(input,
+                                                                         vehicle,
+                                                                         route.route,
+                                                                         pickup_r,
+                                                                         delivery_r,
+                                                                         job_rank);
+                  }
+                }
+                const Cost action_delta_c =
+                  input.include_action_time_in_budget()
+                    ? utils::action_cost_from_duration(vehicle,
+                                                       action_delta_d)
+                    : 0;
+                const Cost budget_added =
+                  utils::job_budget(input.jobs[job_rank]);
+                bool budget_ok = true;
+                if (budget_added > 0) {
+                  budget_ok =
+                    (current_eval.cost + action_delta_c) <= budget_added;
+                }
+                if (!budget_ok) {
+                  // Not acceptable wrt budget, skip.
+                  // Pop back already handled above.
+                } else {
+                  best_cost = current_cost;
+                  best_job_rank = job_rank;
+                  best_pickup_r = pickup_r;
+                  best_delivery_r = delivery_r;
+                  best_modified_delivery = modified_delivery;
+                  best_eval = current_eval;
+                }
               }
             }
           }
@@ -462,6 +549,15 @@ inline Eval fill_route(const Input& input,
       if (best_job.type == JOB_TYPE::SINGLE) {
         route.add(input, best_job_rank, best_r);
         unassigned.erase(best_job_rank);
+        // Update budget trackers
+        if (input.include_action_time_in_budget()) {
+          const auto d = utils::action_time_delta_single(input,
+                                                        vehicle,
+                                                        route.route,
+                                                        best_job_rank,
+                                                        best_r);
+          route_action_cost += utils::action_cost_from_duration(vehicle, d);
+        }
         keep_going = true;
 
         unassigned_costs.update_max_edge(input, route);
@@ -485,6 +581,16 @@ inline Eval fill_route(const Input& input,
                       best_delivery_r);
         unassigned.erase(best_job_rank);
         unassigned.erase(best_job_rank + 1);
+        // Update budget trackers
+        if (input.include_action_time_in_budget()) {
+          const auto d = utils::action_time_delta_pd(input,
+                                                    vehicle,
+                                                    route.route,
+                                                    best_job_rank,
+                                                    best_pickup_r,
+                                                    best_delivery_r);
+          route_action_cost += utils::action_cost_from_duration(vehicle, d);
+        }
         keep_going = true;
 
         unassigned_costs.update_max_edge(input, route);
@@ -845,6 +951,8 @@ void set_route(const Input& input,
     throw InputException(
       std::format("Route over max_distance for vehicle {}.", vehicle.id));
   }
+
+  // Budget feasibility for seeded route: do not hard-fail; handled by gating elsewhere.
 
   if (vehicle.max_tasks < job_ranks.size()) {
     throw InputException(

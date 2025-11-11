@@ -58,15 +58,17 @@ In addition to the top-level keys above, the following optional global flags app
 | --- | --- |
 | `pinned_soft_timing` | boolean (default `false`). When `true`, time windows for seeded pinned tasks (those marked `pinned: true` and present in `vehicle.steps`) are treated as soft for the seed: if the pinned-only route is time-window infeasible (e.g., due to updated travel times), the solver returns a solution with explicit violations instead of failing. Adding extra (non‑pinned) work is allowed only if it does not worsen pinned timing beyond the configured lateness limit (see `pinned_lateness_limit_sec`). Note: membership ("this work stays on this vehicle") is controlled by `pinned: true` + presence in `vehicle.steps`, not by this flag. |
 | `pinned_lateness_limit_sec` | integer seconds (default `0`). Maximum additional lateness that may be introduced before any pinned step by interleaving extra tasks. `0` means strict “no-worsen”: no insertion is allowed before the first pinned task in a route; positive values allow small added delay up to the budget.
+| `include_action_time_in_budget` | boolean (default `false`). When `true`, budget checks (see “Budget constraints”) price setup+service time using the vehicle `per_hour` rate in addition to travel time and distance. When `false`, budgets apply to travel cost only. Action-time pricing requires using costs based on durations/distances (i.e. no custom `costs` matrix). |
 
 Example:
 
 ```
 {
   "pinned_soft_timing": true,
+  "include_action_time_in_budget": true,
   "pinned_lateness_limit_sec": 10,
   "vehicles": [
-    { "id": 101, "start_index": 0, "steps": [
+    { "id": 101, "start_index": 0, "costs": { "per_hour": 3600, "per_km": 0 }, "steps": [
       { "type": "start" },
       { "type": "pickup", "id": 9001 },
       { "type": "delivery", "id": 9002 },
@@ -74,12 +76,12 @@ Example:
     ] }
   ],
   "shipments": [
-    { "amount": [1], "pinned": true,
+    { "amount": [1], "pinned": true, "budget": 1200,
       "pickup": { "id": 9001, "location_index": 1 },
       "delivery": { "id": 9002, "location_index": 2 }
     }
   ],
-  "jobs": [ { "id": 3, "location_index": 3 } ],
+  "jobs": [ { "id": 3, "location_index": 3, "budget": 700 } ],
   "matrices": { "car": { "durations": [[0,5,5,1],[5,0,5,5],[5,5,0,5],[3,5,5,0]] } }
 }
 ```
@@ -107,6 +109,7 @@ A `job` object has the following properties:
 | [`pinned`] | boolean. Defaults to false. When true, this task must be listed in exactly one `vehicle.steps` entry in solving mode, and will remain on that vehicle throughout optimization (may be reordered within that vehicle only). If the seeded pinned route is time‑window infeasible, the solve fails unless `pinned_soft_timing` is `true` (in which case a solution is returned with explicit violations). |
 | [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, this job must be the first task step on its pinned vehicle (ignoring `start`/`break`). If `last`, this job must be the last task step on its pinned vehicle (ignoring `end`/`break`). |
 | [`allowed_vehicles`] | array of vehicle ids eligible for this task |
+| [`budget`] | integer user-cost cap (same units as output `cost`) on the incremental cost to insert this job in a route. When `include_action_time_in_budget` is `true`, budget pricing includes setup+service at the vehicle `per_hour` rate (plus neighbor setup changes). Budget is a hard feasibility filter and does not change the objective. |
 
 An error is reported if two `job` objects have the same `id`.
 
@@ -124,6 +127,7 @@ A `shipment` object has the following properties:
 | [`pinned`] | boolean. Applies to the whole shipment (both pickup and delivery). If `true`, both shipment steps must be present under the same `vehicle.steps` entry. If the seeded pinned route is time‑window infeasible, the solve fails unless `pinned_soft_timing` is `true` (in which case a solution is returned with explicit violations). |
 | [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, the pickup and delivery must appear contiguously as the first two task steps on the pinned vehicle (pickup then delivery). If `last`, they must appear contiguously as the last two task steps on the pinned vehicle. |
 | [`allowed_vehicles`] | array of vehicle ids eligible for both steps |
+| [`budget`] | integer user-cost cap for the shipment (applies to the pickup+delivery pair combined). When `include_action_time_in_budget` is `true`, budget pricing includes setup+service for both steps (plus neighbor setup changes). Budget is a hard feasibility filter and does not change the objective. |
 
 A `shipment_step` is similar to a `job` object (expect for shared keys already present in `shipment`):
 
@@ -330,6 +334,13 @@ If `pinned_position` is provided:
 
 ### Notes
 For must-stay-with-driver behavior in solving mode, use `pinned: true` and include the task in that driver's `vehicle.steps`. For soft preferences, combine `allowed_vehicles` with `priority`.
+
+### Budget constraints
+- Budgets provide per-task caps on the additional route cost associated with assigning that task. They act as hard feasibility filters and do not change the optimization objective.
+- For jobs, the check uses the incremental travel cost of inserting the job at a candidate rank; when `include_action_time_in_budget` is `true`, setup+service time for the job and any change to the next task setup are priced at the vehicle `per_hour` rate and included.
+- For shipments, the check uses the combined incremental travel cost of inserting both pickup and delivery at their candidate ranks (contiguous or not). When `include_action_time_in_budget` is `true`, setup+service for both steps and associated neighbor setup changes are priced at `per_hour` and included.
+- With custom `matrices.costs`, travel costs are taken from the matrix. Action-time pricing for budgets requires costs based on durations/distances (no custom cost matrix); otherwise, only travel is considered.
+- Budgets are enforced during initial construction and local search via per-insertion checks; early prefilters are conservative to avoid false negatives.
 
 ## Matrices
 

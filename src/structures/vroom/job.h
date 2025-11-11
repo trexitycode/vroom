@@ -39,6 +39,9 @@ struct Job {
   const std::string description;
   const TypeToDurationMap setup_per_type;
   const TypeToDurationMap service_per_type;
+  // Optional budget used for route-level budget feasibility.
+  // For shipments, budget should be set on the pickup only (delivery budget=0).
+  const Cost budget;
   // Optional hard-constraint flags/filters
   bool pinned{false};
   PinnedPosition pinned_position{PinnedPosition::NONE};
@@ -61,6 +64,7 @@ struct Job {
       std::string description = "",
       const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
       const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
+      UserCost budget = 0,
       bool pinned = false,
       PinnedPosition pinned_position = PinnedPosition::NONE,
       const std::vector<Id>& allowed_vehicles = std::vector<Id>());
@@ -80,6 +84,7 @@ struct Job {
       std::string description = "",
       const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
       const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
+      UserCost budget = 0,
       bool pinned = false,
       PinnedPosition pinned_position = PinnedPosition::NONE,
       const std::vector<Id>& allowed_vehicles = std::vector<Id>());

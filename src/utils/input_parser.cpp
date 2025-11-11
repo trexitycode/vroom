@@ -48,6 +48,18 @@ inline double get_double(const rapidjson::Value& object, const char* key) {
   return value;
 }
 
+inline UserCost get_user_cost(const rapidjson::Value& object,
+                              const char* key) {
+  UserCost value = 0;
+  if (object.HasMember(key)) {
+    if (!object[key].IsUint()) {
+      throw InputException("Invalid " + std::string(key) + " value.");
+    }
+    value = object[key].GetUint();
+  }
+  return value;
+}
+
 inline bool get_bool(const rapidjson::Value& object, const char* key) {
   bool value = false;
   if (object.HasMember(key)) {
@@ -554,6 +566,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
     throw InputException("pinned_position requires pinned: true");
   }
   auto allowed_vehicles = get_id_array(json_job, "allowed_vehicles");
+  const auto budget = get_user_cost(json_job, "budget");
 
   return Job(json_job["id"].GetUint64(),
              get_task_location(json_job, "job"),
@@ -568,6 +581,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_string(json_job, "description"),
              get_duration_per_type(json_job, "setup_per_type", "job"),
              get_duration_per_type(json_job, "service_per_type", "job"),
+             budget,
              pinned,
              pinned_position,
              allowed_vehicles);
@@ -628,6 +642,13 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
     }
     input.set_pinned_violation_budget(json_input["pinned_lateness_limit_sec"].GetUint());
   }
+  // Optional budget semantics flag at root
+  if (json_input.HasMember("include_action_time_in_budget")) {
+    if (!json_input["include_action_time_in_budget"].IsBool()) {
+      throw InputException("Invalid include_action_time_in_budget value.");
+    }
+    input.set_include_action_time_in_budget(json_input["include_action_time_in_budget"].GetBool());
+  }
 
   if (!json_input.HasMember("vehicles") || !json_input["vehicles"].IsArray()) {
     throw InputException("Invalid vehicles.");
@@ -685,6 +706,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
         throw InputException("pinned_position requires pinned: true");
       }
       auto allowed_vehicles = get_id_array(json_shipment, "allowed_vehicles");
+      const auto shipment_budget = get_user_cost(json_shipment, "budget");
 
       // Defining pickup job.
       auto& json_pickup = json_shipment["pickup"];
@@ -706,6 +728,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                        get_duration_per_type(json_pickup,
                                              "service_per_type",
                                              "pickup"),
+                       shipment_budget, // Budget applies to shipment; set on pickup
                        pinned,
                        pinned_position,
                        allowed_vehicles);
@@ -730,6 +753,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                          get_duration_per_type(json_delivery,
                                                "service_per_type",
                                                "delivery"),
+                         0, // No budget on delivery; counted on pickup
                          pinned,
                          pinned_position,
                          allowed_vehicles);

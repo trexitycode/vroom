@@ -529,8 +529,19 @@ Route format_route(const Input& input,
 
   if (v.has_start()) {
     first_location = v.start.value();
-    assert(remaining_travel_time <= step_start);
-    step_start -= remaining_travel_time;
+    // Under soft-pinned timing, we may not have enough room to move the start
+    // backward by the full remaining_travel_time. Convert the overflow into
+    // backward waiting time and clamp the start at the vehicle TW start.
+    if (remaining_travel_time > step_start) {
+      if (input.pinned_soft_timing()) {
+        backward_wt += (remaining_travel_time - step_start);
+        step_start = 0;
+      } else {
+        assert(remaining_travel_time <= step_start);
+      }
+    } else {
+      step_start -= remaining_travel_time;
+    }
   }
 
   assert(first_location.has_value() && last_location.has_value());

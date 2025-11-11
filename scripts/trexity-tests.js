@@ -81,6 +81,21 @@ function matrix3_cheaper_job2() {
   return { car: { durations: [[0, 300, 100], [300, 0, 200], [100, 200, 0]] } };
 }
 
+function matrix2_100() {
+  return { car: { durations: [[0, 100], [100, 0]] } };
+}
+
+function matrix3_chain_50() {
+  // 0->1=50, 1->2=50, 0->2=999 (not used)
+  return { car: { durations: [[0, 50, 999], [50, 0, 50], [999, 50, 0]] } };
+}
+
+function matrix3_chain_50_both() {
+  const durations = [[0, 50, 999], [50, 0, 50], [999, 50, 0]];
+  const distances = [[0, 500, 9990], [500, 0, 500], [9990, 500, 0]];
+  return { car: { durations, distances } };
+}
+
 function assertExit(exp, got) {
   if (exp !== got) throw new Error(`Expected exit ${exp}, got ${got}`);
 }
@@ -112,6 +127,91 @@ async function run(name, fn) {
 // ----------------------- Tests -----------------------
 
 const tests = {
+  async budget_single_ok() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: true,
+      vehicles: [{ id: 101, start_index: 0 }],
+      jobs: [{ id: 1, location_index: 1, budget: 100 }], // travel 100s -> cost 100
+      matrices: matrix2_100()
+    };
+    const f = writeJSON(t, 'budget_single_ok.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async budget_single_insufficient() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: true,
+      vehicles: [{ id: 101, start_index: 0 }],
+      jobs: [{ id: 1, location_index: 1, budget: 99 }], // need 100
+      matrices: matrix2_100()
+    };
+    const f = writeJSON(t, 'budget_single_insufficient.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 1);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async budget_shipment_ok() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: true,
+      vehicles: [{
+        id: 101,
+        start_index: 0,
+        capacity: [1],
+        steps: [
+          { type: 'start' },
+          { type: 'pickup', id: 11 },
+          { type: 'delivery', id: 12 },
+          { type: 'end' }
+        ]
+      }],
+      shipments: [{
+        amount: [1],
+        budget: 101,
+        pickup: { id: 11, location_index: 1 },
+        delivery: { id: 12, location_index: 2 }
+      }],
+      matrices: matrix3_chain_50()
+    };
+    const f = writeJSON(t, 'budget_shipment_ok.json', input);
+    const { code, json, stdout } = runVroom(f);
+    if (code !== 0) {
+      process.stdout.write(`  DEBUG budget_shipment_ok stdout:\n${stdout}\n`);
+    }
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async budget_counts_service_and_setup() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: true,
+      vehicles: [{ id: 101, start_index: 0 }],
+      // travel 50 + service 30 => 80 budget required
+      jobs: [{ id: 1, location_index: 1, service: 30, budget: 79 }],
+      matrices: { car: { durations: [[0, 50], [50, 0]] } }
+    };
+    // First, insufficient
+    let f = writeJSON(t, 'budget_counts_action_insufficient.json', input);
+    let r = runVroom(f);
+    assertExit(0, r.code);
+    assertJsonEq(r.json, '.summary.unassigned', 1);
+    // Then sufficient
+    input.jobs[0].budget = 80;
+    f = writeJSON(t, 'budget_counts_action_sufficient.json', input);
+    r = runVroom(f);
+    assertExit(0, r.code);
+    assertJsonEq(r.json, '.summary.unassigned', 0);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
   async job_allowed_unassigned() {
     const t = tmpDir();
     const input = {
@@ -784,7 +884,6 @@ const tests = {
     };
     const f = writeJSON(t, 'pinned_soft_timing_saves_infeasible_seed.json', input);
     const { code } = runVroom(f);
-    // EXPECTED AFTER IMPLEMENTATION: exit 0
     assertExit(0, code);
     fs.rmSync(t, { recursive: true, force: true });
   },
@@ -813,6 +912,10 @@ const tests = {
 
 async function main() {
   const order = [
+    'budget_single_ok',
+    'budget_single_insufficient',
+    'budget_shipment_ok',
+    'budget_counts_service_and_setup',
     'job_allowed_unassigned',
     'job_pinned_allowed_success',
     'shipment_allowed_unassigned',

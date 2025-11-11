@@ -45,7 +45,24 @@ compute_best_insertion_single(const Input& input,
          ++rank) {
       const Eval current_eval =
         utils::addition_cost(input, j, v_target, route.route, rank);
-      if (current_eval.cost < result.eval.cost &&
+      // Budget gating
+      bool budget_ok = true;
+      if (current_eval.cost < std::numeric_limits<Cost>::max()) {
+        Duration action_delta_d = 0;
+        if (input.include_action_time_in_budget()) {
+          action_delta_d =
+            utils::action_time_delta_single(input, v_target, route.route, j, rank);
+        }
+        const Cost action_delta_c =
+          input.include_action_time_in_budget()
+            ? utils::action_cost_from_duration(v_target, action_delta_d)
+            : 0;
+        const Cost budget_added = utils::job_budget(input.jobs[j]);
+        if (budget_added > 0) {
+          budget_ok = (current_eval.cost + action_delta_c) <= budget_added;
+        }
+      }
+      if (budget_ok && current_eval.cost < result.eval.cost &&
           v_target.ok_for_range_bounds(sol_state.route_evals[v] +
                                        current_eval) &&
           route.is_valid_addition_for_capacity(input,
@@ -183,7 +200,33 @@ RouteInsertion compute_best_insertion_pd(const Input& input,
         pd_eval = p_add + d_adds[delivery_r];
       }
 
-      if (pd_eval < result.eval &&
+      // Budget gating for PD
+      bool budget_ok = true;
+      if (pd_eval.cost < std::numeric_limits<Cost>::max()) {
+        Duration action_delta_d = 0;
+        if (input.include_action_time_in_budget()) {
+          if (delivery_r == pickup_r) {
+            action_delta_d =
+              utils::action_time_delta_pd_contiguous(input, v_target, j);
+          } else {
+            action_delta_d = utils::action_time_delta_pd_general(input,
+                                                                 v_target,
+                                                                 route.route,
+                                                                 pickup_r,
+                                                                 delivery_r,
+                                                                 j);
+          }
+        }
+        const Cost action_delta_c =
+          input.include_action_time_in_budget()
+            ? utils::action_cost_from_duration(v_target, action_delta_d)
+            : 0;
+        const Cost budget_added = utils::job_budget(input.jobs[j]);
+        if (budget_added > 0) {
+          budget_ok = (pd_eval.cost + action_delta_c) <= budget_added;
+        }
+      }
+      if (budget_ok && pd_eval < result.eval &&
           v_target.ok_for_range_bounds(sol_state.route_evals[v] + pd_eval)) {
         modified_with_pd.push_back(j + 1);
 

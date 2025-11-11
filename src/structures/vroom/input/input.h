@@ -82,6 +82,8 @@ private:
   std::unordered_map<std::string, Cost, StringHash, std::equal_to<>>
     _max_cost_per_hour;
   Cost _cost_upper_bound{0};
+  // Budget semantics
+  bool _include_action_time_in_budget{false};
   std::vector<Location> _locations;
   std::unordered_map<Location, Index> _locations_to_index;
   std::unordered_set<Location> _locations_used_several_times;
@@ -203,6 +205,13 @@ public:
 
   Duration pinned_violation_budget() const {
     return _pinned_violation_budget;
+  }
+  // Budget semantics flag (action times priced into budget check)
+  void set_include_action_time_in_budget(bool v) {
+    _include_action_time_in_budget = v;
+  }
+  bool include_action_time_in_budget() const {
+    return _include_action_time_in_budget;
   }
 
   bool is_used_several_times(const Location& location) const;
