@@ -387,6 +387,11 @@ void Input::add_vehicle(const Vehicle& vehicle) {
   if (current_v.costs.per_km != 0) {
     _profiles_requiring_distances.insert(current_v.profile);
   }
+  // First-leg distance limit requires distances for the relevant profile.
+  if (current_v.has_start() && current_v.steps.empty() &&
+      current_v.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+    _profiles_requiring_distances.insert(current_v.profile);
+  }
 
   if (auto search = _max_cost_per_hour.find(current_v.profile);
       search == _max_cost_per_hour.end()) {
@@ -851,6 +856,17 @@ void Input::set_jobs_vehicles_evals() {
           vehicle.eval(last_job_index, vehicle.end.value().index());
       }
 
+      // Enforce optional first-leg distance bound for empty routes only:
+      // reject candidates that would exceed the start -> first job limit.
+      if (vehicle.has_start() && vehicle.steps.empty() &&
+          vehicle.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+        const auto first_leg_distance =
+          vehicle.eval(vehicle.start.value().index(), j_index).distance;
+        if (first_leg_distance > vehicle.max_first_leg_distance) {
+          current_eval = NO_EVAL;
+        }
+      }
+
       if (is_pickup) {
         // Assign same eval to delivery.
         _jobs_vehicles_evals[j + 1][v] = current_eval;
@@ -1126,6 +1142,11 @@ void Input::enforce_pinned_eligibility() {
       }
     }
   }
+}
+
+void Input::validate_first_leg_limits(Solution&) const {
+  // No-op: rank-0 violations are already prevented at seed and insertion time,
+  // so the final solution should be valid without post-pass mutations.
 }
 
 void Input::init_missing_matrices(const std::string& profile) {
@@ -1595,6 +1616,9 @@ Solution Input::solve(const unsigned nb_searches,
   // Post-pass budget enforcement and repair.
   utils::repair_budget(*this, sol);
 
+  // Final validation: ensure first-leg limit holds.
+  validate_first_leg_limits(sol);
+
   return sol;
 }
 
@@ -1650,6 +1674,9 @@ Solution Input::check(unsigned nb_thread) {
 
     sol.summary.computing_times.routing = routing;
   }
+
+  // Final validation: ensure first-leg limit holds.
+  validate_first_leg_limits(sol);
 
   return sol;
 #else

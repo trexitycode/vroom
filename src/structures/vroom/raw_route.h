@@ -179,6 +179,20 @@ public:
                                 const Index rank) const {
     // Enforce pinned first/last boundaries (no TW logic here)
     const auto v = v_rank;
+    // Enforce first-leg distance bound on head insertion for vehicles without pre-defined steps.
+    if (rank == 0) {
+      const auto& vehicle = input.vehicles[v];
+      if (vehicle.has_start() && vehicle.steps.empty() &&
+          vehicle.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+        const auto start_index = vehicle.start.value().index();
+        const auto head_index = input.jobs[job_rank].index();
+        const auto first_leg_distance =
+          vehicle.eval(start_index, head_index).distance;
+        if (first_leg_distance > vehicle.max_first_leg_distance) {
+          return false;
+        }
+      }
+    }
     if (const auto pf = input.pinned_first_for_vehicle(v); pf.has_value()) {
       const auto& req = pf.value();
       if (req.job_rank.has_value()) {
@@ -226,6 +240,22 @@ public:
     // Enforce pinned first/last boundaries (no TW logic here)
     const auto v = v_rank;
     const auto insert_len = static_cast<unsigned>(std::distance(first_job, last_job));
+
+    // Enforce first-leg distance bound on head insertion for vehicles without pre-defined steps.
+    if (first_rank == 0 && insert_len > 0) {
+      const auto& vehicle = input.vehicles[v];
+      if (vehicle.has_start() && vehicle.steps.empty() &&
+          vehicle.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+        const Index head_job_rank = *first_job;
+        const auto start_index = vehicle.start.value().index();
+        const auto head_index = input.jobs[head_job_rank].index();
+        const auto first_leg_distance =
+          vehicle.eval(start_index, head_index).distance;
+        if (first_leg_distance > vehicle.max_first_leg_distance) {
+          return false;
+        }
+      }
+    }
 
     if (const auto pf = input.pinned_first_for_vehicle(v); pf.has_value()) {
       const auto& req = pf.value();

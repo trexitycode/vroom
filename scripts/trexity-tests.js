@@ -11,17 +11,18 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 function findBinary() {
-  const envBin = process.env.VROOM_BIN;
-  if (envBin && fs.existsSync(envBin)) return envBin;
   const root = path.resolve(__dirname, '..');
   const macos = path.join(root, 'bin', 'vroom-macos');
   const linux = path.join(root, 'bin', 'vroom');
   if (fs.existsSync(macos)) return macos;
   if (fs.existsSync(linux)) return linux;
+  const envBin = process.env.VROOM_BIN;
+  if (envBin && fs.existsSync(envBin)) return envBin;
   throw new Error('FATAL: No vroom binary found. Set VROOM_BIN or build first.');
 }
 
 const BIN = findBinary();
+process.stdout.write(`[BIN] ${BIN}\n`);
 
 function runVroom(inputPath) {
   const res = spawnSync(BIN, ['-i', inputPath], { encoding: 'utf8' });
@@ -94,6 +95,29 @@ function matrix3_chain_50_both() {
   const durations = [[0, 50, 999], [50, 0, 50], [999, 50, 0]];
   const distances = [[0, 500, 9990], [500, 0, 500], [9990, 500, 0]];
   return { car: { durations, distances } };
+}
+
+// Helper to build a symmetric 2x2 matrix with both durations and distances
+function matrix2_both(d01) {
+  return { car: { durations: [[0, d01], [d01, 0]], distances: [[0, d01], [d01, 0]] } };
+}
+
+// Helper to build a symmetric 3x3 matrix with both durations and distances
+function matrix3_both(d01, d02, d12) {
+  return {
+    car: {
+      durations: [
+        [0,   d01, d02],
+        [d01, 0,   d12],
+        [d02, d12, 0  ]
+      ],
+      distances: [
+        [0,   d01, d02],
+        [d01, 0,   d12],
+        [d02, d12, 0  ]
+      ]
+    }
+  };
 }
 
 function assertExit(exp, got) {
@@ -984,6 +1008,103 @@ const tests = {
     const { code } = runVroom(f);
     assertExit(2, code);
     fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // ---------------- max_first_leg_distance tests ----------------
+  async first_leg_blocks_unseeded_far_job() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 301, start_index: 0, max_first_leg_distance: 300 }],
+      jobs: [{ id: 1, location_index: 1 }],
+      // start(0)->job(1) = 500 > 300 => cannot seed, unassigned=1
+      matrices: matrix2_both(500)
+    };
+    const f = writeJSON(t, 'first_leg_blocks_unseeded_far_job.json', input);
+    const { code, json, stdout } = runVroom(f);
+    if (code !== 0) {
+      process.stdout.write(`  DEBUG first_leg_blocks_unseeded_far_job stdout:\n${stdout}\n`);
+    }
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 1);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async first_leg_allows_later_insertion_after_near_seed() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 302, start_index: 0, max_first_leg_distance: 300 }],
+      jobs: [
+        { id: 1, location_index: 1 }, // near, 0->1 = 100
+        { id: 2, location_index: 2 }  // far as seed, 0->2 = 500, but allowed after 1
+      ],
+      // Distances: 0->1=100 (within limit), 0->2=500 (exceeds), 1<->2=100
+      matrices: matrix3_both(100, 500, 100)
+    };
+    const f = writeJSON(t, 'first_leg_allows_later_insertion_after_near_seed.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    // Ensure first job on the route is 1 (the near one)
+    const route = json.routes.find(rt => rt.vehicle === 302);
+    if (!route) throw new Error('Missing route for vehicle 302');
+    const jobSteps = route.steps.filter(s => s.type === 'job');
+    if (!jobSteps.length) throw new Error('Expected at least one job step');
+    if (jobSteps[0].id !== 1) throw new Error(`Expected first job id=1, got ${jobSteps[0].id}`);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async first_leg_blocks_shipment_pickup() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 303, start_index: 0, capacity: [1], max_first_leg_distance: 300 }],
+      shipments: [{
+        amount: [1],
+        pickup: { id: 11, location_index: 1 },   // 0->1 = 500 > 300
+        delivery: { id: 12, location_index: 2 }
+      }],
+      matrices: matrix3_both(500, 200, 100)
+    };
+    const f = writeJSON(t, 'first_leg_blocks_shipment_pickup.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    // both shipment steps remain unassigned
+    assertJsonEq(json, '.summary.unassigned', 2);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async first_leg_ignored_for_vehicles_with_steps() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{
+        id: 304,
+        start_index: 0,
+        max_first_leg_distance: 300, // would block 0->2=500, but steps exist so ignore
+        steps: [
+          { type: 'start' },
+          { type: 'job', id: 2 },
+          { type: 'end' }
+        ]
+      }],
+      jobs: [{ id: 2, location_index: 1, pinned: true, allowed_vehicles: [304] }],
+      matrices: {
+        car: {
+          durations: [
+            // 0 start, 2 job
+            [0, 500],
+            [500, 0]
+          ],
+          distances: [
+            [0, 500],
+            [500, 0]
+          ]
+        }
+      }
+    };
+    const f = writeJSON(t, 'first_leg_ignored_for_vehicles_with_steps.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    fs.rmSync(t, { recursive: true, force: true });
   }
 };
 
@@ -1029,7 +1150,12 @@ async function main() {
     'pinned_soft_timing_blocks_pre_insertion_budget0',
     'pinned_violation_budget_allows_small_delay',
     'pinned_soft_timing_saves_infeasible_seed',
-    'pinned_soft_timing_off_infeasible_seed_fails'
+    'pinned_soft_timing_off_infeasible_seed_fails',
+    // New tests: max_first_leg_distance behavior
+    'first_leg_blocks_unseeded_far_job',
+    'first_leg_allows_later_insertion_after_near_seed',
+    'first_leg_blocks_shipment_pickup',
+    'first_leg_ignored_for_vehicles_with_steps'
   ];
 
   let pass = 0, fail = 0;

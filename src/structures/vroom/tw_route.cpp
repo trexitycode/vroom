@@ -856,6 +856,19 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
 
   const auto& v = input.vehicles[v_rank];
 
+  // Enforce optional first-leg distance bound whenever insertion occurs at rank 0.
+  if (first_rank == 0 && first_job != last_job && v.has_start() &&
+      v.steps.empty() &&
+      v.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+    const Index head_job_rank = *first_job;
+    const auto start_index = v.start.value().index();
+    const auto head_index = input.jobs[head_job_rank].index();
+    const auto first_leg_distance = v.eval(start_index, head_index).distance;
+    if (first_leg_distance > v.max_first_leg_distance) {
+      return false;
+    }
+  }
+
   // Override this value if vehicle does not need this check anyway to
   // spare some work.
   check_max_load = v.has_break_max_load && check_max_load;

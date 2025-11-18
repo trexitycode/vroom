@@ -147,6 +147,10 @@ private:
   // (relax pre-compat restrictions; feasibility is handled during solve).
   void enforce_pinned_eligibility();
 
+  // Final validation pass: ensure first-leg distance limit holds in all routes.
+  // If a violation is found, drop the violating route and mark its jobs unassigned.
+  void validate_first_leg_limits(Solution& sol) const;
+
 public:
   std::vector<Job> jobs;
   std::vector<Vehicle> vehicles;

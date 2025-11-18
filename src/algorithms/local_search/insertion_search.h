@@ -43,6 +43,16 @@ compute_best_insertion_single(const Input& input,
     for (Index rank = sol_state.insertion_ranks_begin[v][j];
          rank < sol_state.insertion_ranks_end[v][j];
          ++rank) {
+      // If insertion is at start, enforce first-leg distance bound (only for vehicles without pre-defined steps).
+      if (rank == 0 && v_target.has_start() && v_target.steps.empty() &&
+          v_target.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+        const auto first_leg_distance =
+          v_target.eval(v_target.start.value().index(), current_job.index())
+            .distance;
+        if (first_leg_distance > v_target.max_first_leg_distance) {
+          continue;
+        }
+      }
       const Eval current_eval =
         utils::addition_cost(input, j, v_target, route.route, rank);
       if (current_eval.cost < result.eval.cost &&
@@ -131,6 +141,16 @@ RouteInsertion compute_best_insertion_pd(const Input& input,
   for (Index pickup_r = sol_state.insertion_ranks_begin[v][j];
        pickup_r < sol_state.insertion_ranks_end[v][j];
        ++pickup_r) {
+    // If pickup is at start, enforce first-leg distance bound (only for vehicles without pre-defined steps).
+    if (pickup_r == 0 && v_target.has_start() && v_target.steps.empty() &&
+        v_target.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+      const auto first_leg_distance =
+        v_target.eval(v_target.start.value().index(), current_job.index())
+          .distance;
+      if (first_leg_distance > v_target.max_first_leg_distance) {
+        continue;
+      }
+    }
     const Eval p_add =
       utils::addition_cost(input, j, v_target, route.route, pickup_r);
     if (result.eval < p_add) {

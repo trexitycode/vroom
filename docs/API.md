@@ -171,6 +171,7 @@ A `vehicle` object has the following properties:
 | [`max_tasks`] | an integer defining the maximum number of tasks in a route for this vehicle |
 | [`max_travel_time`] | an integer defining the maximum travel time for this vehicle |
 | [`max_distance`] | an integer defining the maximum distance for this vehicle |
+| [`max_first_leg_distance`] | an integer (meters) limiting the very first driving leg from `start` to the first task; applies only if the vehicle has a `start` and no pre-existing `steps` |
 | [`steps`] | an array of `vehicle_step` objects describing a custom route for this vehicle |
 
 A `cost` object has the following properties:
@@ -185,6 +186,11 @@ Using a non-default `per-hour` value means defining travel costs based
 on travel times with a multiplicative factor. So in particular
 providing a custom costs matrix for the vehicle is inconsistent and
 will raise an error.
+
+A note on `max_first_leg_distance`:
+- This constraint applies whenever a task would become the first task on a vehicle (rank 0). It prevents making a task first when the distance from the vehicle `start` to that task exceeds the limit.
+- For shipments, the check is done on `start -> pickup`.
+- If distances are not already provided, enabling this option will cause distances to be fetched/required for the relevant profile.
 
 A `break` object has the following properties:
 

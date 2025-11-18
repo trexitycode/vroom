@@ -239,6 +239,18 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
       continue;
     }
 
+    // Enforce first-leg distance limit for vehicles without pre-defined steps.
+    if (v.has_start() && v.steps.empty() &&
+        v.max_first_leg_distance != DEFAULT_MAX_DISTANCE) {
+      const auto& head_job = input.jobs[route.front()];
+      const auto first_leg_distance =
+        v.eval(v.start.value().index(), head_job.index()).distance;
+      if (first_leg_distance > v.max_first_leg_distance) {
+        // Skip building this route; leave all its jobs unassigned.
+        continue;
+      }
+    }
+
     assert(route.size() <= v.max_tasks);
 
     auto previous_location = (v.has_start())

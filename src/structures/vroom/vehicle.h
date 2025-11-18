@@ -61,6 +61,8 @@ struct Vehicle {
   size_t max_tasks;
   const Duration max_travel_time;
   const Distance max_distance;
+  // Optional bound on the very first driving leg (start -> first job)
+  const Distance max_first_leg_distance;
   const bool has_break_max_load;
   std::vector<VehicleStep> steps;
   Index type;
@@ -83,6 +85,8 @@ struct Vehicle {
     const std::optional<UserDuration>& max_travel_time =
       std::optional<UserDuration>(),
     const std::optional<UserDistance>& max_distance =
+      std::optional<UserDistance>(),
+    const std::optional<UserDistance>& max_first_leg_distance =
       std::optional<UserDistance>(),
     const std::vector<VehicleStep>& input_steps = std::vector<VehicleStep>(),
     std::string type_str = NO_TYPE);
