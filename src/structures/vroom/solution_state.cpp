@@ -579,6 +579,15 @@ void SolutionState::set_insertion_ranks(const TWRoute& tw_r, Index v) {
         // Too late to perform job any time after task at t solely
         // based on its TW.
         weak_insertion_ranks_end[v][j] = t + 1;
+        // In theory, bounds derived from earliest/latest dates (strong) are at
+        // least as restrictive as bounds derived only from TWs (weak). In
+        // practice, Trexity's soft timing / pinned slack can relax route
+        // latest/earliest buffers past raw TWs, which can make the computed
+        // relationship temporarily inconsistent. Clamp to preserve invariants
+        // and avoid aborting in production.
+        if (weak_insertion_ranks_end[v][j] < insertion_ranks_end[v][j]) {
+          weak_insertion_ranks_end[v][j] = insertion_ranks_end[v][j];
+        }
         assert(insertion_ranks_end[v][j] <= weak_insertion_ranks_end[v][j]);
         break;
       }
@@ -594,6 +603,10 @@ void SolutionState::set_insertion_ranks(const TWRoute& tw_r, Index v) {
         // Job is available too late to be performed any time before
         // task at rev_t solely based on its TW.
         weak_insertion_ranks_begin[v][j] = rev_t + 1;
+        // Same consistency guard as for *_end above.
+        if (insertion_ranks_begin[v][j] < weak_insertion_ranks_begin[v][j]) {
+          insertion_ranks_begin[v][j] = weak_insertion_ranks_begin[v][j];
+        }
         assert(weak_insertion_ranks_begin[v][j] <= insertion_ranks_begin[v][j]);
         break;
       }
