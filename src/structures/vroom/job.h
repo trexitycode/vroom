@@ -39,6 +39,10 @@ struct Job {
   const std::string description;
   const TypeToDurationMap setup_per_type;
   const TypeToDurationMap service_per_type;
+  // Optional per-vehicle objective penalties (signed, internal cost units),
+  // keyed by vehicle id. Applied when this job is assigned to that vehicle.
+  // For shipments, store penalties on the pickup only (delivery penalties empty).
+  const std::vector<std::pair<Id, Cost>> vehicle_penalties;
   // Optional budget used for route-level budget feasibility.
   // For shipments, budget should be set on the pickup only (delivery budget=0).
   const Cost budget;
@@ -64,6 +68,8 @@ struct Job {
       std::string description = "",
       const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
       const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
+      const std::vector<std::pair<Id, Cost>>& vehicle_penalties =
+        std::vector<std::pair<Id, Cost>>(),
       UserCost budget = 0,
       bool pinned = false,
       PinnedPosition pinned_position = PinnedPosition::NONE,
@@ -84,6 +90,8 @@ struct Job {
       std::string description = "",
       const TypeToUserDurationMap& setup_per_type = TypeToUserDurationMap(),
       const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
+      const std::vector<std::pair<Id, Cost>>& vehicle_penalties =
+        std::vector<std::pair<Id, Cost>>(),
       UserCost budget = 0,
       bool pinned = false,
       PinnedPosition pinned_position = PinnedPosition::NONE,

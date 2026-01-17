@@ -60,6 +60,48 @@ inline UserCost get_user_cost(const rapidjson::Value& object,
   return value;
 }
 
+inline std::vector<std::pair<Id, Cost>>
+get_vehicle_penalties(const rapidjson::Value& object, const char* key) {
+  // Parse as JSON object: { "vehicle_id": signed_int_penalty, ... }
+  // Values are in user cost units and can be negative; we store internal Cost.
+  std::vector<std::pair<Id, Cost>> res;
+
+  if (!object.HasMember(key)) {
+    return res;
+  }
+
+  if (!object[key].IsObject()) {
+    throw InputException("Invalid " + std::string(key) + " value.");
+  }
+
+  constexpr Cost k = DURATION_FACTOR * COST_FACTOR;
+  constexpr auto max_user_abs =
+    static_cast<UserCostSigned>(std::numeric_limits<Cost>::max() / k);
+
+  for (const auto& m : object[key].GetObject()) {
+    // Object keys are strings in JSON.
+    const std::string vid_str = m.name.GetString();
+    Id vid = 0;
+    try {
+      vid = std::stoull(vid_str);
+    } catch (const std::exception&) {
+      throw InputException("Invalid vehicle id in " + std::string(key) + ".");
+    }
+
+    if (!m.value.IsInt64()) {
+      throw InputException("Invalid " + std::string(key) + " value.");
+    }
+    const auto user_pen = static_cast<UserCostSigned>(m.value.GetInt64());
+    if (user_pen > max_user_abs || user_pen < -max_user_abs) {
+      throw InputException("Too high penalty values, stopping to avoid overflowing.");
+    }
+
+    res.emplace_back(vid, utils::scale_from_user_cost_signed(user_pen));
+  }
+
+  return res;
+}
+
 inline bool get_bool(const rapidjson::Value& object, const char* key) {
   bool value = false;
   if (object.HasMember(key)) {
@@ -567,6 +609,8 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
     throw InputException("pinned_position requires pinned: true");
   }
   auto allowed_vehicles = get_id_array(json_job, "allowed_vehicles");
+  const auto vehicle_penalties =
+    get_vehicle_penalties(json_job, "vehicle_penalties");
   const auto budget = get_user_cost(json_job, "budget");
 
   return Job(json_job["id"].GetUint64(),
@@ -582,6 +626,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_string(json_job, "description"),
              get_duration_per_type(json_job, "setup_per_type", "job"),
              get_duration_per_type(json_job, "service_per_type", "job"),
+             vehicle_penalties,
              budget,
              pinned,
              pinned_position,
@@ -714,6 +759,8 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
         throw InputException("pinned_position requires pinned: true");
       }
       auto allowed_vehicles = get_id_array(json_shipment, "allowed_vehicles");
+      const auto vehicle_penalties =
+        get_vehicle_penalties(json_shipment, "vehicle_penalties");
       const auto shipment_budget = get_user_cost(json_shipment, "budget");
 
       // Defining pickup job.
@@ -736,6 +783,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                        get_duration_per_type(json_pickup,
                                              "service_per_type",
                                              "pickup"),
+                       vehicle_penalties,
                        shipment_budget, // Budget applies to shipment; set on pickup
                        pinned,
                        pinned_position,
@@ -761,6 +809,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                          get_duration_per_type(json_delivery,
                                                "service_per_type",
                                                "delivery"),
+                         std::vector<std::pair<Id, Cost>>(),
                          0, // No budget on delivery; counted on pickup
                          pinned,
                          pinned_position,

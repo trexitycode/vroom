@@ -243,7 +243,7 @@ protected:
       semaphore.release();
     };
 
-    std::vector<std::jthread> solving_threads;
+    std::vector<std::thread> solving_threads;
     solving_threads.reserve(nb_searches);
 
     for (unsigned i = 0; i < nb_searches; ++i) {

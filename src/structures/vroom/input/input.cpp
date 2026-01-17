@@ -197,6 +197,19 @@ void Input::add_job(const Job& job) {
   job_id_to_rank[job.id] = jobs.size();
   jobs.push_back(job);
   check_job(jobs.back());
+  // Record per-vehicle objective penalties for this job.
+  std::vector<Cost> penalties(vehicles.size(), 0);
+  for (const auto& [vid, pen] : jobs.back().vehicle_penalties) {
+    const auto search = _vehicle_id_to_rank.find(vid);
+    if (search == _vehicle_id_to_rank.end()) {
+      throw InputException(
+        std::format("Unknown vehicle id {} in vehicle_penalties for job {}.",
+                    vid,
+                    jobs.back().id));
+    }
+    penalties[search->second] = pen;
+  }
+  _job_vehicle_penalties.push_back(std::move(penalties));
   _has_jobs = true;
 }
 
@@ -238,6 +251,22 @@ void Input::add_shipment(const Job& pickup, const Job& delivery) {
   pickup_id_to_rank[pickup.id] = jobs.size();
   jobs.push_back(pickup);
   check_job(jobs.back());
+  // Record penalties for pickup (shipment penalties apply once, on pickup only).
+  {
+    std::vector<Cost> penalties(vehicles.size(), 0);
+    for (const auto& [vid, pen] : jobs.back().vehicle_penalties) {
+      const auto search = _vehicle_id_to_rank.find(vid);
+      if (search == _vehicle_id_to_rank.end()) {
+        throw InputException(
+          std::format(
+            "Unknown vehicle id {} in vehicle_penalties for pickup {}.",
+            vid,
+            jobs.back().id));
+      }
+      penalties[search->second] = pen;
+    }
+    _job_vehicle_penalties.push_back(std::move(penalties));
+  }
 
   if (delivery.type != JOB_TYPE::DELIVERY) {
     throw InputException(
@@ -250,10 +279,17 @@ void Input::add_shipment(const Job& pickup, const Job& delivery) {
   delivery_id_to_rank[delivery.id] = jobs.size();
   jobs.push_back(delivery);
   check_job(jobs.back());
+  // No penalties on delivery (counted once on pickup).
+  _job_vehicle_penalties.push_back(std::vector<Cost>(vehicles.size(), 0));
   _has_shipments = true;
 }
 
 void Input::add_vehicle(const Vehicle& vehicle) {
+  if (_vehicle_id_to_rank.contains(vehicle.id)) {
+    throw InputException(
+      std::format("Duplicate vehicle id: {}.", vehicle.id));
+  }
+  _vehicle_id_to_rank[vehicle.id] = vehicles.size();
   vehicles.push_back(vehicle);
 
   auto& current_v = vehicles.back();
@@ -856,6 +892,10 @@ void Input::set_jobs_vehicles_evals() {
           vehicle.eval(last_job_index, vehicle.end.value().index());
       }
 
+      // Apply optional per-(job,vehicle) objective penalty. For shipments, this
+      // is stored on pickup only and eval is shared with delivery.
+      current_eval.cost += job_vehicle_penalty(j, v);
+
       // Enforce optional first-leg distance bound for empty routes only:
       // reject candidates that would exceed the start -> first job limit.
       if (vehicle.has_start() && vehicle.steps.empty() &&
@@ -1372,7 +1412,7 @@ void Input::set_matrices(unsigned nb_thread, bool sparse_filling) {
     }
   };
 
-  std::vector<std::jthread> matrix_threads;
+  std::vector<std::thread> matrix_threads;
   matrix_threads.reserve(thread_profiles.size());
 
   for (const auto& profiles : thread_profiles) {
@@ -1565,7 +1605,7 @@ Solution Input::solve(const unsigned nb_searches,
   }
 
   if (_geometry) {
-    std::vector<std::jthread> threads;
+    std::vector<std::thread> threads;
     threads.reserve(sol.routes.size());
     std::exception_ptr ep = nullptr;
     std::mutex ep_m;

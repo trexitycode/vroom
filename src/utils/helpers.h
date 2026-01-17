@@ -77,14 +77,15 @@ SORT get_sort(std::string_view s);
 HeuristicParameters str_to_heuristic_param(const std::string& s);
 
 // Evaluate adding job with rank job_rank in given route at given rank
-// for vehicle v.
-inline Eval addition_cost(const Input& input,
-                          Index job_rank,
-                          const Vehicle& v,
-                          const std::vector<Index>& route,
-                          Index rank) {
+// for vehicle at rank v_rank. Travel-only (no objective penalties).
+inline Eval addition_cost_travel(const Input& input,
+                                 Index job_rank,
+                                 Index v_rank,
+                                 const std::vector<Index>& route,
+                                 Index rank) {
   assert(rank <= route.size());
 
+  const auto& v = input.vehicles[v_rank];
   const Index job_index = input.jobs[job_rank].index();
   Eval previous_eval;
   Eval next_eval;
@@ -129,20 +130,33 @@ inline Eval addition_cost(const Input& input,
   return previous_eval + next_eval - old_edge_eval;
 }
 
+// Evaluate adding job with rank job_rank in given route at given rank for the
+// vehicle at rank v_rank. Objective cost includes per-(job,vehicle) penalties.
+inline Eval addition_cost(const Input& input,
+                          Index job_rank,
+                          Index v_rank,
+                          const std::vector<Index>& route,
+                          Index rank) {
+  auto e = addition_cost_travel(input, job_rank, v_rank, route, rank);
+  e.cost += input.job_vehicle_penalty(job_rank, v_rank);
+  return e;
+}
+
 // Evaluate adding pickup with rank job_rank and associated delivery
 // (with rank job_rank + 1) in given route for vehicle v. Pickup is
 // inserted at pickup_rank in route and delivery is inserted at
 // delivery_rank in route **with pickup**.
-inline Eval addition_cost(const Input& input,
-                          Index job_rank,
-                          const Vehicle& v,
-                          const std::vector<Index>& route,
-                          Index pickup_rank,
-                          Index delivery_rank) {
+inline Eval addition_cost_travel(const Input& input,
+                                 Index job_rank,
+                                 Index v_rank,
+                                 const std::vector<Index>& route,
+                                 Index pickup_rank,
+                                 Index delivery_rank) {
   assert(pickup_rank < delivery_rank && delivery_rank <= route.size() + 1);
+  const auto& v = input.vehicles[v_rank];
 
   // Start with pickup eval.
-  auto eval = addition_cost(input, job_rank, v, route, pickup_rank);
+  auto eval = addition_cost_travel(input, job_rank, v_rank, route, pickup_rank);
 
   if (delivery_rank == pickup_rank + 1) {
     // Delivery is inserted just after pickup.
@@ -171,10 +185,43 @@ inline Eval addition_cost(const Input& input,
   } else {
     // Delivery is further away so edges sets for pickup and delivery
     // addition are disjoint.
-    eval += addition_cost(input, job_rank + 1, v, route, delivery_rank - 1);
+    eval += addition_cost_travel(input,
+                                 job_rank + 1,
+                                 v_rank,
+                                 route,
+                                 delivery_rank - 1);
   }
 
   return eval;
+}
+
+inline Eval addition_cost(const Input& input,
+                          Index job_rank,
+                          Index v_rank,
+                          const std::vector<Index>& route,
+                          Index pickup_rank,
+                          Index delivery_rank) {
+  // Travel deltas + pickup penalty only (shipment penalties apply once).
+  auto e = addition_cost_travel(input, job_rank, v_rank, route, pickup_rank, delivery_rank);
+  e.cost += input.job_vehicle_penalty(job_rank, v_rank);
+  return e;
+}
+
+inline Cost penalty_sum_for_range(const SolutionState& sol_state,
+                                 Index route_vehicle,
+                                 Index target_vehicle,
+                                 Index first_rank,
+                                 Index last_rank) {
+  assert(first_rank <= last_rank);
+  if (last_rank == first_rank) {
+    return 0;
+  }
+  assert(last_rank <= sol_state.fwd_penalties[route_vehicle][target_vehicle].size());
+  const auto& pref = sol_state.fwd_penalties[route_vehicle][target_vehicle];
+  if (first_rank == 0) {
+    return pref[last_rank - 1];
+  }
+  return pref[last_rank - 1] - pref[first_rank - 1];
 }
 
 inline auto get_indices(const Input& input,
@@ -228,6 +275,9 @@ inline Eval get_range_removal_gain(const SolutionState& sol_state,
     // Gain related to removed portion.
     removal_gain += sol_state.fwd_costs[v][v][last_rank - 1];
     removal_gain -= sol_state.fwd_costs[v][v][first_rank];
+    // Removing jobs also removes their per-vehicle penalties (objective-only).
+    removal_gain.cost +=
+      penalty_sum_for_range(sol_state, v, v, first_rank, last_rank);
   }
 
   return removal_gain;
@@ -272,6 +322,17 @@ addition_cost_delta(const Input& input,
     reversed_delta += sol_state.bwd_costs[v2_rank][v1_rank][insertion_start];
     reversed_delta -= sol_state.bwd_costs[v2_rank][v1_rank][insertion_end - 1];
   }
+
+  // Penalties for inserted range depend on target vehicle v1_rank, but not on
+  // insertion orientation.
+  const Cost inserted_penalty =
+    penalty_sum_for_range(sol_state,
+                          v2_rank,
+                          v1_rank,
+                          insertion_start,
+                          insertion_end);
+  straight_delta.cost -= inserted_penalty;
+  reversed_delta.cost -= inserted_penalty;
 
   // Determine useful values if present.
   const auto [before_first, first_index, last_index] =
@@ -373,6 +434,9 @@ inline Eval addition_cost_delta(const Input& input,
     const Index before_last = input.jobs[r[last_rank - 1]].index();
     cost_delta += v.eval(before_last, last_index.value());
   }
+
+  // Adding the job also adds its objective penalty for this vehicle.
+  cost_delta.cost -= input.job_vehicle_penalty(job_rank, v_rank);
 
   return cost_delta;
 }

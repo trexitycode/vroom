@@ -18,7 +18,7 @@ All rights reserved (see LICENSE).
 namespace vroom {
 
 struct Summary {
-  UserCost cost{0};
+  UserCostSigned cost{0};
   const unsigned routes;
   const unsigned unassigned;
   Amount delivery;

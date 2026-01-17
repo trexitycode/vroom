@@ -1467,16 +1467,26 @@ Route choose_ETA(const Input& input,
   }
 
   assert(v.fixed_cost() % (DURATION_FACTOR * COST_FACTOR) == 0);
-  const UserCost user_fixed_cost = utils::scale_to_user_cost(v.fixed_cost());
-  const UserCost user_cost =
+  const UserCostSigned user_fixed_cost =
+    static_cast<UserCostSigned>(utils::scale_to_user_cost(v.fixed_cost()));
+  const UserCostSigned user_cost =
     v.cost_based_on_metrics()
-      ? v.cost_wrapper.user_cost_from_user_metrics(user_duration,
-                                                   eval_sum.distance)
-      : utils::scale_to_user_cost(eval_sum.cost);
+      ? static_cast<UserCostSigned>(
+          v.cost_wrapper.user_cost_from_user_metrics(user_duration,
+                                                     eval_sum.distance))
+      : static_cast<UserCostSigned>(utils::scale_to_user_cost(eval_sum.cost));
+
+  // Objective-only per-job penalties (reported in output cost).
+  Cost penalty_sum = 0;
+  for (const auto jr : route) {
+    penalty_sum += input.job_vehicle_penalty(jr, v_rank);
+  }
+  const UserCostSigned user_penalty =
+    utils::scale_to_user_cost_signed(penalty_sum);
 
   return Route(v.id,
                std::move(sol_steps),
-               user_fixed_cost + user_cost,
+               user_fixed_cost + user_cost + user_penalty,
                user_duration,
                eval_sum.distance,
                utils::scale_to_user_duration(setup),

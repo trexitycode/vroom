@@ -376,11 +376,24 @@ Solution format_solution(const Input& input, const RawSolution& raw_routes) {
     assert(v.ok_for_range_bounds(eval_sum));
 
     assert(v.fixed_cost() % (DURATION_FACTOR * COST_FACTOR) == 0);
-    const UserCost user_fixed_cost = scale_to_user_cost(v.fixed_cost());
+    const UserCostSigned user_fixed_cost =
+      static_cast<UserCostSigned>(scale_to_user_cost(v.fixed_cost()));
+
+    // Objective-only per-job penalties (already stored internal). This is
+    // reported in output cost, but is not part of feasibility checks.
+    Cost penalty_sum = 0;
+    for (const auto jr : route) {
+      penalty_sum += input.job_vehicle_penalty(jr, static_cast<Index>(i));
+    }
+    const UserCostSigned user_penalty =
+      utils::scale_to_user_cost_signed(penalty_sum);
 
     routes.emplace_back(v.id,
                         std::move(steps),
-                        user_fixed_cost + scale_to_user_cost(eval_sum.cost),
+                        user_fixed_cost +
+                          static_cast<UserCostSigned>(
+                            scale_to_user_cost(eval_sum.cost)) +
+                          user_penalty,
                         scale_to_user_duration(eval_sum.duration),
                         eval_sum.distance,
                         scale_to_user_duration(setup),

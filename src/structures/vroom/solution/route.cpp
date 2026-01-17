@@ -15,7 +15,7 @@ Route::Route() = default;
 
 Route::Route(Id vehicle,
              std::vector<Step>&& steps,
-             UserCost cost,
+             UserCostSigned cost,
              UserDuration duration,
              UserDistance distance,
              UserDuration setup,

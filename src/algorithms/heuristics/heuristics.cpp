@@ -345,7 +345,7 @@ inline Eval fill_route(const Input& input,
             continue;
           }
           const auto current_eval =
-            utils::addition_cost(input, job_rank, vehicle, route.route, r);
+            utils::addition_cost(input, job_rank, v_rank, route.route, r);
 
           const double current_cost = static_cast<double>(current_eval.cost) -
             lambda * static_cast<double>(regrets[job_rank]);
@@ -382,11 +382,8 @@ inline Eval fill_route(const Input& input,
           route.route.size() + 1);
 
         for (unsigned d_rank = 0; d_rank <= route.route.size(); ++d_rank) {
-          d_adds[d_rank] = utils::addition_cost(input,
-                                                job_rank + 1,
-                                                vehicle,
-                                                route.route,
-                                                d_rank);
+          d_adds[d_rank] =
+            utils::addition_cost(input, job_rank + 1, v_rank, route.route, d_rank);
           valid_delivery_insertions[d_rank] =
             route.is_valid_addition_for_tw_without_max_load(input,
                                                             job_rank + 1,
@@ -400,7 +397,7 @@ inline Eval fill_route(const Input& input,
           }
           const auto p_add = utils::addition_cost(input,
                                                   job_rank,
-                                                  vehicle,
+                                                  v_rank,
                                                   route.route,
                                                   pickup_r);
 
@@ -441,7 +438,7 @@ inline Eval fill_route(const Input& input,
             if (pickup_r == delivery_r) {
               current_eval = utils::addition_cost(input,
                                                   job_rank,
-                                                  vehicle,
+                                                  v_rank,
                                                   route.route,
                                                   pickup_r,
                                                   pickup_r + 1);

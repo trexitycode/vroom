@@ -12,12 +12,12 @@ const { spawnSync } = require('child_process');
 
 function findBinary() {
   const root = path.resolve(__dirname, '..');
+  const envBin = process.env.VROOM_BIN;
+  if (envBin && fs.existsSync(envBin)) return envBin;
   const macos = path.join(root, 'bin', 'vroom-macos');
   const linux = path.join(root, 'bin', 'vroom');
   if (fs.existsSync(macos)) return macos;
   if (fs.existsSync(linux)) return linux;
-  const envBin = process.env.VROOM_BIN;
-  if (envBin && fs.existsSync(envBin)) return envBin;
   throw new Error('FATAL: No vroom binary found. Set VROOM_BIN or build first.');
 }
 
@@ -175,6 +175,113 @@ const tests = {
       matrices: matrix2_100()
     };
     const f = writeJSON(t, 'budget_single_insufficient.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 1);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async preference_positive_penalty_discourages_vehicle() {
+    const t = tmpDir();
+    // Two vehicles with different starts, one job. Vehicle 102 is closer but
+    // gets a positive penalty, so vehicle 101 should be chosen.
+    const input = {
+      vehicles: [
+        { id: 101, start_index: 0 },
+        { id: 102, start_index: 1 }
+      ],
+      jobs: [{
+        id: 1,
+        location_index: 2,
+        vehicle_penalties: { '102': 150 } // discourage 102
+      }],
+      matrices: matrix3_both(0, 200, 100) // 0->job=200, 1->job=100
+    };
+    const f = writeJSON(t, 'pref_pos_penalty.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.routes.0.vehicle', 101);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async preference_negative_penalty_biases_vehicle() {
+    const t = tmpDir();
+    // Vehicle 102 is closer by travel cost, but vehicle 101 gets a negative
+    // penalty large enough to win on objective cost.
+    const input = {
+      vehicles: [
+        { id: 101, start_index: 0 },
+        { id: 102, start_index: 1 }
+      ],
+      jobs: [{
+        id: 1,
+        location_index: 2,
+        vehicle_penalties: { '101': -150 } // bias toward 101
+      }],
+      matrices: matrix3_both(0, 200, 100) // 0->job=200, 1->job=100
+    };
+    const f = writeJSON(t, 'pref_neg_penalty.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.routes.0.vehicle', 101);
+    // Cost should include the penalty: travel 200 + (-150) = 50
+    assertJsonEq(json, '.routes.0.cost', 50);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async preference_shipment_penalty_applied_once_on_pickup() {
+    const t = tmpDir();
+    // Shipment with pickup+delivery. Vehicle 102 is closer, but 101 gets a
+    // negative penalty. We also assert the penalty is applied once (not twice).
+    const input = {
+      vehicles: [
+        { id: 101, start_index: 0, capacity: [1] },
+        { id: 102, start_index: 1, capacity: [1] }
+      ],
+      shipments: [{
+        amount: [1],
+        vehicle_penalties: { '101': -150 },
+        pickup: { id: 11, location_index: 2 },
+        delivery: { id: 12, location_index: 3 }
+      }],
+      matrices: {
+        car: {
+          durations: [
+            // 0=v101 start, 1=v102 start, 2=pickup, 3=delivery
+            [0,   0,   200, 0],
+            [0,   0,   100, 0],
+            [200, 100, 0,   10],
+            [0,   0,   10,  0]
+          ]
+        }
+      }
+    };
+    const f = writeJSON(t, 'pref_shipment_penalty_once.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.routes.0.vehicle', 101);
+    // Cost should be start->pickup (200) + pickup->delivery (10) + penalty (-150) = 60
+    assertJsonEq(json, '.routes.0.cost', 60);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async budget_ignores_vehicle_penalties() {
+    const t = tmpDir();
+    const input = {
+      include_action_time_in_budget: true,
+      vehicles: [{ id: 101, start_index: 0 }],
+      jobs: [{
+        id: 1,
+        location_index: 1,
+        budget: 99, // travel 100s -> cost 100, still insufficient
+        vehicle_penalties: { '101': -1000 } // should NOT make budget feasible
+      }],
+      matrices: matrix2_100()
+    };
+    const f = writeJSON(t, 'budget_ignores_penalties.json', input);
     const { code, json } = runVroom(f);
     assertExit(0, code);
     assertJsonEq(json, '.summary.unassigned', 1);
@@ -1112,6 +1219,11 @@ async function main() {
   const order = [
     'budget_single_ok',
     'budget_single_insufficient',
+    // New tests: vehicle_penalties (objective-only)
+    'preference_positive_penalty_discourages_vehicle',
+    'preference_negative_penalty_biases_vehicle',
+    'preference_shipment_penalty_applied_once_on_pickup',
+    'budget_ignores_vehicle_penalties',
     'budget_shipment_ok',
     'budget_counts_service_and_setup',
     // New route-level budget repair tests

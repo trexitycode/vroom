@@ -68,10 +68,8 @@ void UnassignedExchange::compute_gain() {
                                         _u);
   } else {
     // No common edge so both gains can be computed independently.
-    const auto& v = _input.vehicles[s_vehicle];
-
     s_gain = _sol_state.node_gains[s_vehicle][s_rank] -
-             utils::addition_cost(_input, _u, v, s_route, t_rank);
+             utils::addition_cost(_input, _u, s_vehicle, s_route, t_rank);
   }
 
   stored_gain = s_gain;

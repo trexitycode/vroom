@@ -20,6 +20,8 @@ SolutionState::SolutionState(const Input& input)
     _nb_vehicles(_input.vehicles.size()),
     fwd_costs(_nb_vehicles, std::vector<std::vector<Eval>>(_nb_vehicles)),
     bwd_costs(_nb_vehicles, std::vector<std::vector<Eval>>(_nb_vehicles)),
+    fwd_penalties(_nb_vehicles,
+                  std::vector<std::vector<Cost>>(_nb_vehicles)),
     fwd_skill_rank(_nb_vehicles, std::vector<Index>(_nb_vehicles)),
     bwd_skill_rank(_nb_vehicles, std::vector<Index>(_nb_vehicles)),
     fwd_priority(_nb_vehicles),
@@ -85,6 +87,9 @@ void SolutionState::update_costs(const std::vector<Index>& route, Index v) {
   bwd_costs[v] =
     std::vector<std::vector<Eval>>(_nb_vehicles,
                                    std::vector<Eval>(route.size()));
+  fwd_penalties[v] =
+    std::vector<std::vector<Cost>>(_nb_vehicles,
+                                   std::vector<Cost>(route.size(), 0));
 
   Index previous_index = 0; // dummy init
   if (!route.empty()) {
@@ -92,6 +97,8 @@ void SolutionState::update_costs(const std::vector<Index>& route, Index v) {
     for (Index v_rank = 0; v_rank < _nb_vehicles; ++v_rank) {
       fwd_costs[v][v_rank][0] = Eval();
       bwd_costs[v][v_rank][0] = Eval();
+      fwd_penalties[v][v_rank][0] =
+        _input.job_vehicle_penalty(route[0], v_rank);
     }
   }
 
@@ -104,6 +111,10 @@ void SolutionState::update_costs(const std::vector<Index>& route, Index v) {
 
       bwd_costs[v][v_rank][i] = bwd_costs[v][v_rank][i - 1] +
                                 other_v.eval(current_index, previous_index);
+
+      fwd_penalties[v][v_rank][i] =
+        fwd_penalties[v][v_rank][i - 1] +
+        _input.job_vehicle_penalty(route[i], v_rank);
     }
     previous_index = current_index;
   }
@@ -196,6 +207,8 @@ void SolutionState::set_node_gains(const std::vector<Index>& route, Index v) {
   edge_evals_around_node[v][0] = edges_evals_around;
 
   Eval current_gain = edges_evals_around - new_edge_eval;
+  // Removing a job also removes its per-vehicle objective penalty.
+  current_gain.cost += _input.job_vehicle_penalty(route[0], v);
   node_gains[v][0] = current_gain;
   Eval best_gain = current_gain;
   node_candidates[v] = 0;
@@ -217,6 +230,7 @@ void SolutionState::set_node_gains(const std::vector<Index>& route, Index v) {
     edge_evals_around_node[v][i] = edges_evals_around;
 
     current_gain = edges_evals_around - vehicle.eval(p_index, n_index);
+    current_gain.cost += _input.job_vehicle_penalty(route[i], v);
     node_gains[v][i] = current_gain;
 
     if (best_gain < current_gain) {
@@ -259,6 +273,7 @@ void SolutionState::set_node_gains(const std::vector<Index>& route, Index v) {
   edge_evals_around_node[v][last_rank] = edges_evals_around;
 
   current_gain = edges_evals_around - new_edge_eval;
+  current_gain.cost += _input.job_vehicle_penalty(route[last_rank], v);
   node_gains[v][last_rank] = current_gain;
 
   if (best_gain < current_gain) {
@@ -454,6 +469,9 @@ void SolutionState::set_pd_gains(const std::vector<Index>& route, Index v) {
       pd_gains[v][pickup_rank] = previous_eval +
                                  vehicle.eval(pickup_index, delivery_index) +
                                  next_eval - new_edge_eval;
+      // Shipment penalty is counted once on pickup only.
+      pd_gains[v][pickup_rank].cost +=
+        _input.job_vehicle_penalty(route[pickup_rank], v);
     } else {
       // Simply add both gains as neighbouring edges are disjoint.
       pd_gains[v][pickup_rank] =
@@ -653,6 +671,16 @@ void SolutionState::update_cheapest_job_rank_in_routes(
 void SolutionState::update_route_eval(const std::vector<Index>& route,
                                       Index v) {
   route_evals[v] = route_eval_for_vehicle(_input, v, route);
+  if (!route.empty()) {
+    // Add objective-only penalties for jobs assigned to this vehicle.
+    // Do not rely on fwd_penalties being up-to-date here: local search can
+    // update route_evals before calling update_costs.
+    Cost sum = 0;
+    for (const auto jr : route) {
+      sum += _input.job_vehicle_penalty(jr, v);
+    }
+    route_evals[v].cost += sum;
+  }
 }
 
 void SolutionState::update_route_bbox(const std::vector<Index>& route,

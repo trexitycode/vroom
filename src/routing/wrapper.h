@@ -88,7 +88,7 @@ public:
         }
       };
 
-    std::vector<std::jthread> vehicles_threads;
+    std::vector<std::thread> vehicles_threads;
     vehicles_threads.reserve(vehicles.size());
 
     for (Index v_rank = 0; v_rank < vehicles.size(); ++v_rank) {

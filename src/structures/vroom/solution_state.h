@@ -35,6 +35,12 @@ public:
   std::vector<std::vector<std::vector<Eval>>> fwd_costs;
   std::vector<std::vector<std::vector<Eval>>> bwd_costs;
 
+  // fwd_penalties[v][new_v][i] stores the sum of per-job objective penalties
+  // from job at rank 0 to job at rank i (included) in the route for vehicle v,
+  // from the point of view of vehicle new_v (penalties depend on assignment
+  // vehicle only, not on travel direction).
+  std::vector<std::vector<std::vector<Cost>>> fwd_penalties;
+
   // fwd_skill_rank[v1][v2] stores the maximum rank r for a step in
   // route for vehicle v1 such that v2 can handle all jobs from step 0
   // to r -- excluded -- in that route. bwd_skill_rank[v1][v2] stores

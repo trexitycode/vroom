@@ -28,6 +28,9 @@ namespace vroom {
 using Id = uint64_t;
 using Index = uint16_t;
 using UserCost = uint32_t;
+// Signed cost in user units (used for reporting objective cost that may include
+// negative components such as preference penalties).
+using UserCostSigned = int64_t;
 using Cost = int64_t;
 using UserDuration = uint32_t;
 using Duration = int64_t;
@@ -226,9 +229,19 @@ constexpr Cost scale_from_user_cost(UserCost c) {
   return DURATION_FACTOR * COST_FACTOR * static_cast<Cost>(c);
 }
 
+inline Cost scale_from_user_cost_signed(UserCostSigned c) {
+  // Caller is responsible for ensuring the value fits once scaled.
+  return (DURATION_FACTOR * COST_FACTOR) * static_cast<Cost>(c);
+}
+
 constexpr UserCost scale_to_user_cost(Cost c) {
   assert(c <= scale_from_user_cost(std::numeric_limits<UserCost>::max()));
   return static_cast<UserCost>(c / (DURATION_FACTOR * COST_FACTOR));
+}
+
+inline UserCostSigned scale_to_user_cost_signed(Cost c) {
+  constexpr Cost k = DURATION_FACTOR * COST_FACTOR;
+  return static_cast<UserCostSigned>(c / k);
 }
 } // namespace utils
 } // namespace vroom

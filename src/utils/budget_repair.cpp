@@ -192,7 +192,12 @@ void repair_budget(const Input& input, Solution& sol) {
               const Index delivery_after =
                 (delivery_r == pickup_r) ? (pickup_r + 1) : (delivery_r + 1);
               const Eval delta_eval =
-                utils::addition_cost(input, pr, *v_ptr, tw_cur.route, pickup_r, delivery_after);
+                utils::addition_cost_travel(input,
+                                            pr,
+                                            v_index,
+                                            tw_cur.route,
+                                            pickup_r,
+                                            delivery_after);
               Cost delta_cost = delta_eval.cost;
               if (input.include_action_time_in_budget()) {
                 const Duration ad = utils::action_time_delta_pd_general(
@@ -221,7 +226,8 @@ void repair_budget(const Input& input, Solution& sol) {
                 !tw_cur.is_valid_addition_for_tw(input, jr, rpos)) {
               continue;
             }
-            const Eval delta_eval = utils::addition_cost(input, jr, *v_ptr, tw_cur.route, rpos);
+            const Eval delta_eval =
+              utils::addition_cost_travel(input, jr, v_index, tw_cur.route, rpos);
             Cost delta_cost = delta_eval.cost;
             if (input.include_action_time_in_budget()) {
               const Duration ad = utils::action_time_delta_single(input, *v_ptr, tw_cur.route, jr, rpos);

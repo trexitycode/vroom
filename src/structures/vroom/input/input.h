@@ -14,6 +14,7 @@ All rights reserved (see LICENSE).
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 
 #include "routing/wrapper.h"
 #include "structures/generic/matrix.h"
@@ -100,6 +101,11 @@ private:
   std::vector<std::vector<Eval>> _jobs_vehicles_evals;
   // Repair tuning: max candidate unassigned jobs/shipments to consider for densify
   unsigned _budget_densify_candidates_k{20};
+
+  // Vehicle id -> rank lookup for fast validation and penalty plumbing.
+  std::unordered_map<Id, Index> _vehicle_id_to_rank;
+  // Per-(job_rank, vehicle_rank) objective penalties (internal Cost units).
+  std::vector<std::vector<Cost>> _job_vehicle_penalties;
 
   // Default vehicle type is NO_TYPE, related to the fact that we do
   // not allow empty types as keys for jobs.
@@ -252,6 +258,12 @@ public:
 
   bool vehicle_ok_with_job(size_t v_index, size_t j_index) const {
     return static_cast<bool>(_vehicle_to_job_compatibility[v_index][j_index]);
+  }
+
+  Cost job_vehicle_penalty(Index job_rank, Index v_rank) const {
+    assert(job_rank < _job_vehicle_penalties.size());
+    assert(v_rank < _job_vehicle_penalties[job_rank].size());
+    return _job_vehicle_penalties[job_rank][v_rank];
   }
 
   // Pinned helpers
