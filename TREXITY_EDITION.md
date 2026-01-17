@@ -17,9 +17,9 @@ This document tracks Trexity-specific additions and behavior changes on top of u
 ### Unreleased
 
 - Added:
-  - 
+  - `vehicle_penalties` on jobs and shipments: optional per-(vehicle, task) signed objective adjustments (negative values bias assignment toward a vehicle). For shipments, applied once (counted on pickup only). Does not affect feasibility or route-level budget checks.
 - Changed:
-  - 
+  - Output `cost` in `summary.cost` and `routes[].cost` can now be negative when `vehicle_penalties` are negative enough to outweigh travel cost (costs reflect optimized objective).
 - Fixed:
   - 
 

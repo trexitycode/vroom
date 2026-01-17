@@ -283,10 +283,11 @@ inline Eval get_range_removal_gain(const SolutionState& sol_state,
   return removal_gain;
 }
 
-// Compute cost variation when replacing the [first_rank, last_rank)
-// portion for route1 with the range [insertion_start; insertion_end)
-// from route_2. Returns a tuple to evaluate at once both options
-// where new range is inserted as is, or reversed.
+// Compute objective *gain* (i.e., decrease in objective cost) when replacing the
+// [first_rank, last_rank) portion for route_1 with the range
+// [insertion_start; insertion_end) from route_2.
+// Returns a tuple to evaluate at once both options where the new range is
+// inserted as-is, or reversed.
 inline std::tuple<Eval, Eval>
 addition_cost_delta(const Input& input,
                     const SolutionState& sol_state,
@@ -324,15 +325,18 @@ addition_cost_delta(const Input& input,
   }
 
   // Penalties for inserted range depend on target vehicle v1_rank, but not on
-  // insertion orientation.
-  const Cost inserted_penalty =
+  // insertion orientation. Note: this function returns *gain*, so we subtract
+  // the penalty *cost* of inserted jobs. This correctly makes negative penalties
+  // (preferences) increase gain (more attractive) and positive penalties
+  // decrease gain (less attractive).
+  const Cost inserted_penalty_cost =
     penalty_sum_for_range(sol_state,
                           v2_rank,
                           v1_rank,
                           insertion_start,
                           insertion_end);
-  straight_delta.cost -= inserted_penalty;
-  reversed_delta.cost -= inserted_penalty;
+  straight_delta.cost -= inserted_penalty_cost;
+  reversed_delta.cost -= inserted_penalty_cost;
 
   // Determine useful values if present.
   const auto [before_first, first_index, last_index] =
