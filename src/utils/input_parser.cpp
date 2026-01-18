@@ -62,8 +62,8 @@ inline UserCost get_user_cost(const rapidjson::Value& object,
 
 inline std::vector<std::pair<Id, Cost>>
 get_vehicle_penalties(const rapidjson::Value& object, const char* key) {
-  // Parse as JSON object: { "vehicle_id": signed_int_penalty, ... }
-  // Values are in user cost units and can be negative; we store internal Cost.
+  // Parse as JSON object: { "vehicle_id": int_penalty, ... }
+  // Values are in user cost units; we store internal Cost.
   std::vector<std::pair<Id, Cost>> res;
 
   if (!object.HasMember(key)) {
@@ -74,9 +74,8 @@ get_vehicle_penalties(const rapidjson::Value& object, const char* key) {
     throw InputException("Invalid " + std::string(key) + " value.");
   }
 
-  constexpr Cost k = DURATION_FACTOR * COST_FACTOR;
-  constexpr auto max_user_abs =
-    static_cast<UserCostSigned>(std::numeric_limits<Cost>::max() / k);
+  constexpr auto max_user =
+    static_cast<std::int64_t>(std::numeric_limits<UserCost>::max());
 
   for (const auto& m : object[key].GetObject()) {
     // Object keys are strings in JSON.
@@ -91,12 +90,19 @@ get_vehicle_penalties(const rapidjson::Value& object, const char* key) {
     if (!m.value.IsInt64()) {
       throw InputException("Invalid " + std::string(key) + " value.");
     }
-    const auto user_pen = static_cast<UserCostSigned>(m.value.GetInt64());
-    if (user_pen > max_user_abs || user_pen < -max_user_abs) {
-      throw InputException("Too high penalty values, stopping to avoid overflowing.");
+    const auto user_pen_signed = static_cast<std::int64_t>(m.value.GetInt64());
+    if (user_pen_signed < 0) {
+      throw InputException(
+        "Negative vehicle_penalties are not supported; use positive penalties on other vehicles instead.");
+    }
+    if (user_pen_signed > max_user) {
+      throw InputException(
+        "Too high penalty values, stopping to avoid overflowing.");
     }
 
-    res.emplace_back(vid, utils::scale_from_user_cost_signed(user_pen));
+    res.emplace_back(vid,
+                     utils::scale_from_user_cost(
+                       static_cast<UserCost>(user_pen_signed)));
   }
 
   return res;

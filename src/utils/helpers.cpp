@@ -927,9 +927,19 @@ Route format_route(const Input& input,
                                                    eval_sum.distance)
       : utils::scale_to_user_cost(eval_sum.cost);
 
+  // Objective-only per-job penalties (reported in output cost, but do not affect
+  // feasibility checks). For shipments, penalties are stored on pickup only.
+  Cost penalty_sum = 0;
+  for (const auto jr : tw_r.route) {
+    penalty_sum += input.job_vehicle_penalty(jr, tw_r.v_rank);
+  }
+  const UserCostSigned user_penalty =
+    utils::scale_to_user_cost_signed(penalty_sum);
+
   return Route(v.id,
                std::move(steps),
-               user_fixed_cost + user_cost,
+               static_cast<UserCostSigned>(user_fixed_cost) +
+                 static_cast<UserCostSigned>(user_cost) + user_penalty,
                user_duration,
                eval_sum.distance,
                scale_to_user_duration(setup),
