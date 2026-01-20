@@ -1478,8 +1478,12 @@ Route choose_ETA(const Input& input,
 
   // Objective-only per-job penalties (reported in output cost).
   Cost penalty_sum = 0;
-  for (const auto jr : route) {
-    penalty_sum += input.job_vehicle_penalty(jr, v_rank);
+  // Penalties are stored by job_rank and depend on the assigned vehicle.
+  // For shipments, penalties are counted once on pickup only (delivery has 0).
+  for (const auto& step : steps) {
+    if (step.type == STEP_TYPE::JOB) {
+      penalty_sum += input.job_vehicle_penalty(step.rank, vehicle_rank);
+    }
   }
   const UserCostSigned user_penalty =
     utils::scale_to_user_cost_signed(penalty_sum);
