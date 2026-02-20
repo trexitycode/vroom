@@ -39,6 +39,7 @@ using Distance = int64_t;
 using Coordinate = double;
 using Capacity = int64_t;
 using Skill = uint32_t;
+using ExclusiveTag = uint32_t;
 using Priority = uint32_t;
 
 // Type helpers.
@@ -151,6 +152,7 @@ enum class VIOLATION : std::uint8_t {
   LOAD,
   MAX_TASKS,
   SKILLS,
+  EXCLUSIVE_TAGS,
   PRECEDENCE,
   MISSING_BREAK,
   MAX_TRAVEL_TIME,

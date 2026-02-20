@@ -149,6 +149,7 @@ Solution CVRP::solve(const unsigned nb_searches,
                      const std::vector<HeuristicParameters>& h_param) const {
   if (_input.vehicles.size() == 1 && !_input.has_skills() &&
       _input.zero_amount().empty() && !_input.has_shipments() &&
+      _input.exclusive_tag_count() == 0 &&
       (_input.jobs.size() <= _input.vehicles[0].max_tasks) &&
       _input.vehicles[0].steps.empty() &&
       !_input.vehicles[0].has_range_bounds()) {

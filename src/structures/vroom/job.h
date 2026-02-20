@@ -43,6 +43,9 @@ struct Job {
   // keyed by vehicle id. Applied when this job is assigned to that vehicle.
   // For shipments, store penalties on the pickup only (delivery penalties empty).
   const std::vector<std::pair<Id, Cost>> vehicle_penalties;
+  // Optional exclusive tags: at most one task per tag may appear in a route.
+  // For shipments, tags should be set on the pickup only (delivery tags empty).
+  const std::vector<ExclusiveTag> exclusive_tags;
   // Optional budget used for route-level budget feasibility.
   // For shipments, budget should be set on the pickup only (delivery budget=0).
   const Cost budget;
@@ -70,6 +73,7 @@ struct Job {
       const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
       const std::vector<std::pair<Id, Cost>>& vehicle_penalties =
         std::vector<std::pair<Id, Cost>>(),
+      const std::vector<ExclusiveTag>& exclusive_tags = std::vector<ExclusiveTag>(),
       UserCost budget = 0,
       bool pinned = false,
       PinnedPosition pinned_position = PinnedPosition::NONE,
@@ -92,6 +96,7 @@ struct Job {
       const TypeToUserDurationMap& service_per_type = TypeToUserDurationMap(),
       const std::vector<std::pair<Id, Cost>>& vehicle_penalties =
         std::vector<std::pair<Id, Cost>>(),
+      const std::vector<ExclusiveTag>& exclusive_tags = std::vector<ExclusiveTag>(),
       UserCost budget = 0,
       bool pinned = false,
       PinnedPosition pinned_position = PinnedPosition::NONE,

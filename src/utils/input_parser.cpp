@@ -201,6 +201,34 @@ inline Skills get_skills(const rapidjson::Value& object) {
   return skills;
 }
 
+inline std::vector<ExclusiveTag> get_exclusive_tags(const rapidjson::Value& object,
+                                                    const std::string& task_type) {
+  std::vector<ExclusiveTag> tags;
+  if (!object.HasMember("exclusive_tags")) {
+    return tags;
+  }
+  if (!object["exclusive_tags"].IsArray()) {
+    if (object.HasMember("id") && object["id"].IsUint64()) {
+      throw InputException(std::format("Invalid exclusive_tags array for {} {}.",
+                                       task_type,
+                                       object["id"].GetUint64()));
+    }
+    throw InputException(std::format("Invalid exclusive_tags array for {}.", task_type));
+  }
+  for (rapidjson::SizeType i = 0; i < object["exclusive_tags"].Size(); ++i) {
+    if (!object["exclusive_tags"][i].IsUint()) {
+      if (object.HasMember("id") && object["id"].IsUint64()) {
+        throw InputException(std::format("Invalid exclusive_tags value for {} {}.",
+                                         task_type,
+                                         object["id"].GetUint64()));
+      }
+      throw InputException(std::format("Invalid exclusive_tags value for {}.", task_type));
+    }
+    tags.push_back(object["exclusive_tags"][i].GetUint());
+  }
+  return tags;
+}
+
 inline UserDuration get_duration(const rapidjson::Value& object,
                                  const char* key) {
   UserDuration duration = 0;
@@ -617,6 +645,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
   auto allowed_vehicles = get_id_array(json_job, "allowed_vehicles");
   const auto vehicle_penalties =
     get_vehicle_penalties(json_job, "vehicle_penalties");
+  const auto exclusive_tags = get_exclusive_tags(json_job, "job");
   const auto budget = get_user_cost(json_job, "budget");
 
   return Job(json_job["id"].GetUint64(),
@@ -633,6 +662,7 @@ inline Job get_job(const rapidjson::Value& json_job, unsigned amount_size) {
              get_duration_per_type(json_job, "setup_per_type", "job"),
              get_duration_per_type(json_job, "service_per_type", "job"),
              vehicle_penalties,
+             exclusive_tags,
              budget,
              pinned,
              pinned_position,
@@ -709,6 +739,15 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
     input.set_budget_densify_candidates_k(json_input["budget_densify_candidates_k"].GetUint());
   }
 
+  // Optional exclusive tag pinned-conflict policy
+  if (json_input.HasMember("exclusive_tags_allow_pinned_conflicts")) {
+    if (!json_input["exclusive_tags_allow_pinned_conflicts"].IsBool()) {
+      throw InputException("Invalid exclusive_tags_allow_pinned_conflicts value.");
+    }
+    input.set_exclusive_tags_allow_pinned_conflicts(
+      json_input["exclusive_tags_allow_pinned_conflicts"].GetBool());
+  }
+
   if (!json_input.HasMember("vehicles") || !json_input["vehicles"].IsArray()) {
     throw InputException("Invalid vehicles.");
   }
@@ -767,6 +806,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
       auto allowed_vehicles = get_id_array(json_shipment, "allowed_vehicles");
       const auto vehicle_penalties =
         get_vehicle_penalties(json_shipment, "vehicle_penalties");
+      const auto exclusive_tags = get_exclusive_tags(json_shipment, "shipment");
       const auto shipment_budget = get_user_cost(json_shipment, "budget");
 
       // Defining pickup job.
@@ -790,6 +830,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                                              "service_per_type",
                                              "pickup"),
                        vehicle_penalties,
+                       exclusive_tags, // Count shipment tags once on pickup
                        shipment_budget, // Budget applies to shipment; set on pickup
                        pinned,
                        pinned_position,
@@ -816,6 +857,7 @@ void parse(Input& input, const std::string& input_str, bool geometry) {
                                                "service_per_type",
                                                "delivery"),
                          std::vector<std::pair<Id, Cost>>(),
+                         std::vector<ExclusiveTag>(), // tags counted on pickup only
                          0, // No budget on delivery; counted on pickup
                          pinned,
                          pinned_position,

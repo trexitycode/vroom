@@ -1168,6 +1168,99 @@ void Input::set_vehicle_steps_ranks() {
   }
 }
 
+void Input::init_exclusive_tags() {
+  _exclusive_tag_to_rank.clear();
+  _exclusive_tag_ids_by_job_rank.clear();
+  _exclusive_tag_ids_by_job_rank.resize(jobs.size());
+  _exclusive_tag_pinned_counts_by_vehicle.clear();
+
+  if (jobs.empty()) {
+    return;
+  }
+
+  const bool can_check_pinned =
+    (_pinned_vehicle_by_job.size() == jobs.size()) && !vehicles.empty();
+  std::vector<std::unordered_map<ExclusiveTag, Id>> pinned_tag_to_task_id;
+  if (can_check_pinned) {
+    pinned_tag_to_task_id.resize(vehicles.size());
+  }
+
+  for (Index j = 0; j < jobs.size(); ++j) {
+    const auto& job = jobs[j];
+    if (job.exclusive_tags.empty()) {
+      continue;
+    }
+
+    // Ensure no duplicates within a single task.
+    std::vector<ExclusiveTag> unique_tags = job.exclusive_tags;
+    std::ranges::sort(unique_tags);
+    for (std::size_t i = 1; i < unique_tags.size(); ++i) {
+      if (unique_tags[i] == unique_tags[i - 1]) {
+        throw InputException(std::format(
+          "Duplicate exclusive tag {} for task {}.",
+          unique_tags[i],
+          job.id));
+      }
+    }
+
+    // Reject pinned conflicts: solver can't fix two pinned tasks with same tag
+    // on the same vehicle.
+    if (!_exclusive_tags_allow_pinned_conflicts &&
+        can_check_pinned && _pinned_vehicle_by_job[j].has_value()) {
+      const auto v_rank = _pinned_vehicle_by_job[j].value();
+      assert(v_rank < vehicles.size());
+      for (const auto t : unique_tags) {
+        auto& m = pinned_tag_to_task_id[v_rank];
+        if (const auto it = m.find(t); it != m.end()) {
+          throw InputException(std::format(
+            "Pinned tasks {} and {} share exclusive tag {} on vehicle {}.",
+            it->second,
+            job.id,
+            t,
+            vehicles[v_rank].id));
+        }
+        m.emplace(t, job.id);
+      }
+    }
+
+    // Normalize to compact ids.
+    auto& out = _exclusive_tag_ids_by_job_rank[j];
+    out.reserve(unique_tags.size());
+    for (const auto t : unique_tags) {
+      auto it = _exclusive_tag_to_rank.find(t);
+      if (it == _exclusive_tag_to_rank.end()) {
+        if (_exclusive_tag_to_rank.size() >
+            static_cast<std::size_t>(std::numeric_limits<Index>::max())) {
+          throw InputException("Too many exclusive tags, stopping.");
+        }
+        const Index next = static_cast<Index>(_exclusive_tag_to_rank.size());
+        it = _exclusive_tag_to_rank.emplace(t, next).first;
+      }
+      out.push_back(it->second);
+    }
+  }
+
+  // Compute per-vehicle pinned counts per normalized tag.
+  _exclusive_tag_pinned_counts_by_vehicle.assign(
+    vehicles.size(),
+    std::vector<unsigned short>(exclusive_tag_count(), 0));
+  if (can_check_pinned && exclusive_tag_count() > 0) {
+    for (Index j = 0; j < jobs.size(); ++j) {
+      if (!jobs[j].pinned || !_pinned_vehicle_by_job[j].has_value()) {
+        continue;
+      }
+      const auto v_rank = _pinned_vehicle_by_job[j].value();
+      for (const auto tid : _exclusive_tag_ids_by_job_rank[j]) {
+        _exclusive_tag_pinned_counts_by_vehicle[v_rank][tid] += 1;
+      }
+    }
+  }
+
+  // When allowing pinned conflicts, we still need pinned counts to define
+  // per-route limits. When not allowing, the earlier strict check already
+  // rejected duplicates.
+}
+
 void Input::enforce_pinned_eligibility() {
   if (_pinned_vehicle_by_job.empty() || !_pinned_soft_timing) {
     return;
@@ -1472,6 +1565,8 @@ Solution Input::solve(const unsigned nb_searches,
     set_vehicle_steps_ranks();
   }
 
+  init_exclusive_tags();
+
   set_jobs_durations_per_vehicle_type();
 
   set_matrices(nb_thread);
@@ -1669,6 +1764,8 @@ Solution Input::check(unsigned nb_thread) {
   set_jobs_durations_per_vehicle_type();
 
   set_vehicle_steps_ranks();
+
+  init_exclusive_tags();
 
   constexpr bool sparse_filling = true;
   set_matrices(nb_thread, sparse_filling);

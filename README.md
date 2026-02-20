@@ -11,6 +11,10 @@ that solves complex [vehicle routing
 problems](https://en.wikipedia.org/wiki/Vehicle_routing_problem) (VRP)
 in milliseconds.
 
+This repository is a Trexity edition fork. Trexity-specific input keys and
+behavior changes (e.g. `exclusive_tags`) are documented in `docs/API.md` and
+tracked in `TREXITY_EDITION.md`.
+
 The project is maintained by [Verso](https://verso-optim.com). If you
 want to get started as quickly as possible with route optimization,
 you want white-glove support to increase the ROI from your

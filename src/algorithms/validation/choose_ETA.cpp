@@ -1147,6 +1147,24 @@ Route choose_ETA(const Input& input,
                          std::inserter(break_ids, break_ids.end()),
                          [](const auto& b) { return b.id; });
 
+  // Used to report exclusive tag constraint violations.
+  // Default limit is 1 per tag per route; when pinned conflicts are allowed,
+  // allow up to the pinned count for that vehicle.
+  std::vector<unsigned short> exclusive_tag_counts(input.exclusive_tag_count(), 0);
+  const std::vector<unsigned short>* exclusive_tag_limits = nullptr;
+  std::vector<unsigned short> computed_limits;
+  if (input.exclusive_tag_count() > 0) {
+    computed_limits.assign(input.exclusive_tag_count(), 1);
+    if (input.exclusive_tags_allow_pinned_conflicts()) {
+      const auto& pinned = input.exclusive_tag_pinned_counts(vehicle_rank);
+      assert(pinned.size() == computed_limits.size());
+      for (std::size_t t = 0; t < computed_limits.size(); ++t) {
+        computed_limits[t] = std::max<unsigned short>(1, pinned[t]);
+      }
+    }
+    exclusive_tag_limits = &computed_limits;
+  }
+
   std::vector<Step> sol_steps;
   sol_steps.reserve(steps.size());
 
@@ -1215,6 +1233,17 @@ Route choose_ETA(const Input& input,
                              utils::scale_to_user_duration(current_service),
                              current_load);
       auto& current = sol_steps.back();
+
+      // Exclusive tags violation: duplicate tag in the same route.
+      if (exclusive_tag_limits != nullptr) {
+        for (const auto tid : input.exclusive_tag_ids(job_rank)) {
+          exclusive_tag_counts[tid] += 1;
+          if (exclusive_tag_counts[tid] > (*exclusive_tag_limits)[tid]) {
+            current.violations.types.insert(VIOLATION::EXCLUSIVE_TAGS);
+            v_types.insert(VIOLATION::EXCLUSIVE_TAGS);
+          }
+        }
+      }
 
       const auto arrival = previous_start + previous_action + previous_travel;
       const auto service_start = task_ETA[task_rank];

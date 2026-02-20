@@ -60,6 +60,7 @@ In addition to the top-level keys above, the following optional global flags app
 | `pinned_lateness_limit_sec` | integer seconds (default `0`). Maximum additional lateness that may be introduced before any pinned step by interleaving extra tasks. `0` means strict “no-worsen”: no insertion is allowed before the first pinned task in a route; positive values allow small added delay up to the budget.
 | `include_action_time_in_budget` | boolean (default `false`). When `true`, route-level budget checks (see “Budget constraints”) price setup+service time using the vehicle `per_hour` rate in addition to travel time and distance. When `false`, budgets apply to travel cost only. Action-time pricing requires costs derived from durations/distances (i.e. no custom `matrices.costs`). |
 | `budget_densify_candidates_k` | positive integer (default `20`). Upper bound on the number of unassigned candidates considered when attempting to densify an over‑budget route during budget repair. Larger values explore more options at higher compute cost. |
+| `exclusive_tags_allow_pinned_conflicts` | boolean (default `false`). When `false`, if two pinned tasks on the same vehicle share an `exclusive_tags` value, input is rejected. When `true`, such contradictions are allowed (useful for admin-forced routes), and the solver continues while still preventing any additional task with that tag from being added to that vehicle beyond the pinned count. |
 
 Budgets: Budgets are always enforced at the route level. After initial route construction, each route is accepted only if its total cost (travel cost and, if `include_action_time_in_budget` is `true`, priced setup+service) is less than or equal to the sum of the `budget` values of tasks on that route. For shipments, the budget is specified once on the shipment and counted on the pickup. Routes with no budgeted tasks are not subject to budget enforcement.
 
@@ -113,6 +114,7 @@ A `job` object has the following properties:
 | [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, this job must be the first task step on its pinned vehicle (ignoring `start`/`break`). If `last`, this job must be the last task step on its pinned vehicle (ignoring `end`/`break`). |
 | [`allowed_vehicles`] | array of vehicle ids eligible for this task |
 | [`vehicle_penalties`] | object mapping vehicle ids to integer penalty values in user `cost` units (**must be ≥ 0**). These values are added to the optimization objective when this job is assigned to the given vehicle, discouraging assignment to that vehicle. This is a soft preference only: feasibility is unchanged. For shipments, this penalty is applied once for the shipment (counted on the pickup only). Penalties do **not** contribute to route-level budget feasibility checks. To bias *toward* a vehicle, apply positive penalties to the other vehicles instead. |
+| [`exclusive_tags`] | array of integers. Hard constraint: by default, for each vehicle route, each tag value may appear at most once across all tasks on that route. If `exclusive_tags_allow_pinned_conflicts` is true, the allowed count is increased to match the number of pinned tasks already carrying that tag on that vehicle. If a task has multiple tags, it blocks all of them. |
 | [`budget`] | integer user‑cost contribution to the route‑level budget cap (same units as output `cost`). A route is feasible if its total cost is ≤ the sum of budgets for tasks on that route. When `include_action_time_in_budget` is `true`, route cost includes priced setup+service at the vehicle `per_hour` rate. Budget is a hard constraint but does not change the objective. |
 
 An error is reported if two `job` objects have the same `id`.
@@ -132,6 +134,7 @@ A `shipment` object has the following properties:
 | [`pinned_position`] | string, one of `"first"` or `"last"`. Requires `pinned: true`. If `first`, the pickup and delivery must appear contiguously as the first two task steps on the pinned vehicle (pickup then delivery). If `last`, they must appear contiguously as the last two task steps on the pinned vehicle. |
 | [`allowed_vehicles`] | array of vehicle ids eligible for both steps |
 | [`vehicle_penalties`] | object mapping vehicle ids to integer penalty values in user `cost` units (**must be ≥ 0**). Applied once for the whole shipment (counted on pickup only). Soft preference only; feasibility unchanged; does not contribute to route-level budget feasibility checks. To bias *toward* a vehicle, apply positive penalties to the other vehicles instead. |
+| [`exclusive_tags`] | array of integers. Hard constraint: by default, for each vehicle route, each tag value may appear at most once across all tasks on that route. If `exclusive_tags_allow_pinned_conflicts` is true, the allowed count is increased to match the number of pinned tasks already carrying that tag on that vehicle. Counted once for the shipment (on the pickup). |
 | [`budget`] | integer user‑cost contribution for the shipment as a whole (counted once on the pickup). A route is feasible if its total cost is ≤ the sum of budgets for tasks on that route. When `include_action_time_in_budget` is `true`, route cost includes priced setup+service at the vehicle `per_hour` rate. Budget is a hard constraint but does not change the objective. |
 
 A `shipment_step` is similar to a `job` object (expect for shared keys already present in `shipment`):
@@ -500,6 +503,7 @@ Possible violation causes are:
 - "load" if the vehicle load goes over its capacity
 - "max_tasks" if the vehicle has more tasks than its `max_tasks` value
 - "skills" if the vehicle does not hold all required skills for a task
+- "exclusive_tags" if a route exceeds the allowed count for an exclusive tag value (default 1; when `exclusive_tags_allow_pinned_conflicts` is true, the limit is the pinned count for that vehicle)
 - "precedence" if a `shipment` precedence constraint is not met (`pickup` without matching `delivery`, `delivery` before/without matching `pickup`)
 - "missing_break" if a vehicle break has been omitted in its custom route
 - "max_travel_time" if the vehicle has more travel time than its `max_travel_time` value

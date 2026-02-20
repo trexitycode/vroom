@@ -854,6 +854,66 @@ bool TWRoute::is_valid_addition_for_tw(const Input& input,
   assert(first_job <= last_job);
   assert(first_rank <= last_rank);
 
+  // Exclusive tags: route membership constraint.
+  if (!exclusive_tag_counts().empty()) {
+    std::vector<Index> inserted_tag_ids;
+    for (auto it = first_job; it != last_job; ++it) {
+      const auto& tags = input.exclusive_tag_ids(*it);
+      inserted_tag_ids.insert(inserted_tag_ids.end(), tags.begin(), tags.end());
+    }
+
+    if (!inserted_tag_ids.empty()) {
+      std::ranges::sort(inserted_tag_ids);
+      // Unique tids + counts in inserted range.
+      std::vector<Index> inserted_unique_tids;
+      std::vector<unsigned short> inserted_counts;
+      for (std::size_t i = 0; i < inserted_tag_ids.size();) {
+        const auto tid = inserted_tag_ids[i];
+        std::size_t j = i + 1;
+        while (j < inserted_tag_ids.size() && inserted_tag_ids[j] == tid) {
+          ++j;
+        }
+        const auto c = static_cast<unsigned short>(j - i);
+        if (c > exclusive_tag_limits()[tid]) {
+          return false;
+        }
+        inserted_unique_tids.push_back(tid);
+        inserted_counts.push_back(c);
+        i = j;
+      }
+
+      // For each inserted tag, ensure resulting count stays under limit when
+      // accounting for replaced segment [first_rank; last_rank).
+      std::vector<unsigned short> removed_counts(inserted_unique_tids.size(), 0);
+
+      const Index stop = std::min(static_cast<Index>(route.size()), last_rank);
+      for (Index r = std::min(first_rank, stop); r < stop; ++r) {
+        for (const auto tid : input.exclusive_tag_ids(route[r])) {
+          const auto lb = std::ranges::lower_bound(inserted_unique_tids, tid);
+          if (lb != inserted_unique_tids.end() && *lb == tid) {
+            const auto pos =
+              static_cast<std::size_t>(std::distance(inserted_unique_tids.begin(), lb));
+            removed_counts[pos] += 1;
+          }
+        }
+      }
+
+      const auto& totals = exclusive_tag_counts();
+      for (std::size_t i = 0; i < inserted_unique_tids.size(); ++i) {
+        const auto tid = inserted_unique_tids[i];
+        const auto total = totals[tid];
+        const auto removed = removed_counts[i];
+        const auto added = inserted_counts[i];
+        const int new_total = static_cast<int>(total) -
+                              static_cast<int>(removed) +
+                              static_cast<int>(added);
+        if (new_total > static_cast<int>(exclusive_tag_limits()[tid])) {
+          return false;
+        }
+      }
+    }
+  }
+
   const auto& v = input.vehicles[v_rank];
 
   // Enforce optional first-leg distance bound whenever insertion occurs at rank 0.

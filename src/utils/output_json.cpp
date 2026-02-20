@@ -45,6 +45,9 @@ get_violations(const Violations& violations,
     case SKILLS:
       cause = "skills";
       break;
+    case EXCLUSIVE_TAGS:
+      cause = "exclusive_tags";
+      break;
     case PRECEDENCE:
       cause = "precedence";
       break;

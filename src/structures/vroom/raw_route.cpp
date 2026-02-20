@@ -13,6 +13,8 @@ namespace vroom {
 
 RawRoute::RawRoute(const Input& input, Index i, unsigned amount_size)
   : _zero(amount_size),
+    _exclusive_tag_counts(input.exclusive_tag_count(), 0),
+    _exclusive_tag_limits(input.exclusive_tag_count(), 1),
     _fwd_peaks(2, _zero),
     _bwd_peaks(2, _zero),
     _delivery_margin(input.vehicles[i].capacity),
@@ -22,6 +24,13 @@ RawRoute::RawRoute(const Input& input, Index i, unsigned amount_size)
     has_start(input.vehicles[i].has_start()),
     has_end(input.vehicles[i].has_end()),
     capacity(input.vehicles[i].capacity) {
+  if (!_exclusive_tag_limits.empty()) {
+    const auto& pinned = input.exclusive_tag_pinned_counts(i);
+    assert(pinned.size() == _exclusive_tag_limits.size());
+    for (std::size_t t = 0; t < _exclusive_tag_limits.size(); ++t) {
+      _exclusive_tag_limits[t] = std::max<unsigned short>(1, pinned[t]);
+    }
+  }
 }
 
 void RawRoute::set_route(const Input& input, const std::vector<Index>& r) {
@@ -30,6 +39,22 @@ void RawRoute::set_route(const Input& input, const std::vector<Index>& r) {
 }
 
 void RawRoute::update_amounts(const Input& input) {
+  if (_exclusive_tag_counts.size() != input.exclusive_tag_count()) {
+    _exclusive_tag_counts.assign(input.exclusive_tag_count(), 0);
+  } else {
+    std::ranges::fill(_exclusive_tag_counts, 0);
+  }
+  if (_exclusive_tag_limits.size() != input.exclusive_tag_count()) {
+    _exclusive_tag_limits.assign(input.exclusive_tag_count(), 1);
+    if (!_exclusive_tag_limits.empty()) {
+      const auto& pinned = input.exclusive_tag_pinned_counts(v_rank);
+      assert(pinned.size() == _exclusive_tag_limits.size());
+      for (std::size_t t = 0; t < _exclusive_tag_limits.size(); ++t) {
+        _exclusive_tag_limits[t] = std::max<unsigned short>(1, pinned[t]);
+      }
+    }
+  }
+
   auto step_size = route.size() + 2;
   _fwd_pickups.resize(route.size());
   _fwd_deliveries.resize(route.size());
@@ -76,6 +101,10 @@ void RawRoute::update_amounts(const Input& input) {
       current_pd_load -= job.delivery;
       current_nb_deliveries += 1;
       break;
+    }
+    for (const auto tid : input.exclusive_tag_ids(route[i])) {
+      assert(tid < _exclusive_tag_counts.size());
+      _exclusive_tag_counts[tid] += 1;
     }
     _fwd_pickups[i] = current_pickups;
     _fwd_deliveries[i] = current_deliveries;

@@ -18,6 +18,8 @@ This document tracks Trexity-specific additions and behavior changes on top of u
 
 - Added:
   - `vehicle_penalties` on jobs and shipments: optional per-(vehicle, task) objective penalties (non-negative integers) to discourage assignment to specific vehicles. For shipments, applied once (counted on pickup only). Does not affect feasibility or route-level budget checks.
+  - `exclusive_tags` on jobs and shipments: hard constraint to ensure that, for each vehicle route, each tag value appears at most once across all tasks on that route. For shipments, counted once on pickup.
+  - `exclusive_tags_allow_pinned_conflicts`: when true, allow pinned routes to contain multiple tasks sharing an exclusive tag (e.g., admin-forced), while still preventing any further additions beyond the pinned count.
 - Changed:
   - Output `cost` in `summary.cost` and `routes[].cost` includes `vehicle_penalties` (objective cost reporting).
 - Fixed:

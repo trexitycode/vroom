@@ -102,6 +102,17 @@ private:
   // Repair tuning: max candidate unassigned jobs/shipments to consider for densify
   unsigned _budget_densify_candidates_k{20};
 
+  // Exclusive tags: normalize tag values to compact indices.
+  std::unordered_map<ExclusiveTag, Index> _exclusive_tag_to_rank;
+  // For each job_rank, store normalized exclusive tag indices.
+  std::vector<std::vector<Index>> _exclusive_tag_ids_by_job_rank;
+  // For each vehicle, store counts of pinned tasks per exclusive tag id.
+  std::vector<std::vector<unsigned short>> _exclusive_tag_pinned_counts_by_vehicle;
+  // When true, allow a pinned route to start with duplicate exclusive tags.
+  // Feasibility checks will then cap insertions at the pinned count for that tag
+  // (e.g., 2 pinned is allowed, but a 3rd is forbidden).
+  bool _exclusive_tags_allow_pinned_conflicts{false};
+
   // Vehicle id -> rank lookup for fast validation and penalty plumbing.
   std::unordered_map<Id, Index> _vehicle_id_to_rank;
   // Per-(job_rank, vehicle_rank) objective penalties (internal Cost units).
@@ -140,6 +151,7 @@ private:
   void set_jobs_vehicles_evals();
   void set_jobs_durations_per_vehicle_type();
   void set_vehicle_steps_ranks();
+  void init_exclusive_tags();
   void init_missing_matrices(const std::string& profile);
 
   routing::Matrices get_matrices_by_profile(const std::string& profile,
@@ -176,6 +188,20 @@ public:
   unsigned get_amount_size() const {
     assert(_amount_size.has_value());
     return _amount_size.value();
+  }
+
+  std::size_t exclusive_tag_count() const {
+    return _exclusive_tag_to_rank.size();
+  }
+
+  const std::vector<Index>& exclusive_tag_ids(Index job_rank) const {
+    assert(job_rank < _exclusive_tag_ids_by_job_rank.size());
+    return _exclusive_tag_ids_by_job_rank[job_rank];
+  }
+
+  const std::vector<unsigned short>& exclusive_tag_pinned_counts(Index v_rank) const {
+    assert(v_rank < _exclusive_tag_pinned_counts_by_vehicle.size());
+    return _exclusive_tag_pinned_counts_by_vehicle[v_rank];
   }
 
   void set_geometry(bool geometry);
@@ -224,6 +250,14 @@ public:
   }
   bool include_action_time_in_budget() const {
     return _include_action_time_in_budget;
+  }
+
+  void set_exclusive_tags_allow_pinned_conflicts(bool v) {
+    _exclusive_tags_allow_pinned_conflicts = v;
+  }
+
+  bool exclusive_tags_allow_pinned_conflicts() const {
+    return _exclusive_tags_allow_pinned_conflicts;
   }
 
   bool is_used_several_times(const Location& location) const;

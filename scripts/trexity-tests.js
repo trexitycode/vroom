@@ -1213,6 +1213,178 @@ const tests = {
     assertExit(0, code);
     assertJsonEq(json, '.summary.unassigned', 0);
     fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  // ---------------- exclusive_tags tests ----------------
+  async exclusive_tags_single_vehicle_conflict_unassigns_one() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 401, start_index: 0 }],
+      jobs: [
+        { id: 1, location_index: 1, exclusive_tags: [1] },
+        { id: 2, location_index: 2, exclusive_tags: [1] }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'exclusive_tags_single_vehicle_conflict.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 1);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async exclusive_tags_two_vehicles_all_assigned() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [
+        { id: 402, start_index: 0 },
+        { id: 403, start_index: 1 }
+      ],
+      jobs: [
+        { id: 1, location_index: 2, exclusive_tags: [1] },
+        { id: 2, location_index: 3, exclusive_tags: [1] }
+      ],
+      matrices: {
+        car: {
+          durations: [
+            // 0=v402 start, 1=v403 start, 2=job1, 3=job2
+            [0,   0,  10, 100],
+            [0,   0, 100,  10],
+            [10, 100,  0,  50],
+            [100, 10, 50,   0]
+          ]
+        }
+      }
+    };
+    const f = writeJSON(t, 'exclusive_tags_two_vehicles_all_assigned.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    // Each job must be on a different route due to the exclusive tag.
+    assertJsonEq(json, '.summary.routes', 2);
+    const assigned = new Set();
+    for (const rt of json.routes) {
+      for (const st of rt.steps) {
+        if (st.type === 'job') assigned.add(st.id);
+      }
+    }
+    if (!(assigned.has(1) && assigned.has(2))) {
+      throw new Error(`Expected both jobs assigned, got [${Array.from(assigned)}]`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async exclusive_tags_shipment_conflict_unassigns_one_shipment() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 404, start_index: 0, capacity: [1] }],
+      shipments: [
+        {
+          amount: [1],
+          exclusive_tags: [1],
+          pickup: { id: 11, location_index: 1 },
+          delivery: { id: 12, location_index: 2 }
+        },
+        {
+          amount: [1],
+          exclusive_tags: [1],
+          pickup: { id: 21, location_index: 3 },
+          delivery: { id: 22, location_index: 4 }
+        }
+      ],
+      matrices: {
+        car: {
+          durations: [
+            // 0 start, 1 p1, 2 d1, 3 p2, 4 d2
+            [0, 10, 10, 10, 10],
+            [10, 0,  10, 10, 10],
+            [10, 10, 0,  10, 10],
+            [10, 10, 10, 0,  10],
+            [10, 10, 10, 10, 0]
+          ]
+        }
+      }
+    };
+    const f = writeJSON(t, 'exclusive_tags_shipment_conflict.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    // One shipment (pickup+delivery) must remain unassigned.
+    assertJsonEq(json, '.summary.unassigned', 2);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async exclusive_tags_pinned_conflict_err() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{
+        id: 405,
+        start_index: 0,
+        steps: [
+          { type: 'start' },
+          { type: 'job', id: 1 },
+          { type: 'job', id: 2 },
+          { type: 'end' }
+        ]
+      }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true, exclusive_tags: [1] },
+        { id: 2, location_index: 2, pinned: true, exclusive_tags: [1] }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'exclusive_tags_pinned_conflict_err.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(2, code);
+    if (!json.error.includes('Pinned tasks')) {
+      throw new Error(`Unexpected error: ${json.error}`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async exclusive_tags_pinned_conflict_allowed_blocks_third() {
+    const t = tmpDir();
+    const input = {
+      exclusive_tags_allow_pinned_conflicts: true,
+      vehicles: [{
+        id: 406,
+        start_index: 0,
+        steps: [
+          { type: 'start' },
+          { type: 'job', id: 1 },
+          { type: 'job', id: 2 },
+          { type: 'end' }
+        ]
+      }],
+      jobs: [
+        { id: 1, location_index: 1, pinned: true, exclusive_tags: [1] },
+        { id: 2, location_index: 2, pinned: true, exclusive_tags: [1] },
+        { id: 3, location_index: 3, exclusive_tags: [1] }
+      ],
+      matrices: {
+        car: { durations: [
+          // 0 start, 1 job1, 2 job2, 3 job3
+          [0, 10, 10, 10],
+          [10, 0, 10, 10],
+          [10, 10, 0, 10],
+          [10, 10, 10, 0]
+        ] }
+      }
+    };
+    const f = writeJSON(t, 'exclusive_tags_pinned_conflict_allowed_blocks_third.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    // Job 3 must remain unassigned (tag already used twice by pinned jobs).
+    assertJsonEq(json, '.summary.unassigned', 1);
+    const assigned = new Set();
+    for (const rt of json.routes) {
+      for (const st of rt.steps) {
+        if (st.type === 'job') assigned.add(st.id);
+      }
+    }
+    if (!(assigned.has(1) && assigned.has(2)) || assigned.has(3)) {
+      throw new Error(`Expected jobs 1&2 assigned and 3 unassigned, got assigned [${Array.from(assigned)}]`);
+    }
+    fs.rmSync(t, { recursive: true, force: true });
   }
 };
 
@@ -1268,7 +1440,13 @@ async function main() {
     'first_leg_blocks_unseeded_far_job',
     'first_leg_allows_later_insertion_after_near_seed',
     'first_leg_blocks_shipment_pickup',
-    'first_leg_ignored_for_vehicles_with_steps'
+    'first_leg_ignored_for_vehicles_with_steps',
+    // exclusive_tags
+    'exclusive_tags_single_vehicle_conflict_unassigns_one',
+    'exclusive_tags_two_vehicles_all_assigned',
+    'exclusive_tags_shipment_conflict_unassigns_one_shipment',
+    'exclusive_tags_pinned_conflict_err',
+    'exclusive_tags_pinned_conflict_allowed_blocks_third'
   ];
 
   let pass = 0, fail = 0;
