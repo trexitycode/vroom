@@ -477,6 +477,7 @@ void SolutionState::set_pd_gains(const std::vector<Index>& route, Index v) {
       pd_gains[v][pickup_rank] =
         node_gains[v][pickup_rank] + node_gains[v][delivery_rank];
     }
+
   }
 }
 
@@ -681,6 +682,9 @@ void SolutionState::update_route_eval(const std::vector<Index>& route,
     }
     route_evals[v].cost += sum;
   }
+  // Pickup approach penalty is excluded from route_evals to avoid cycling
+  // in the local search. It is applied in SolutionIndicators (outer-loop
+  // comparison) and insertion evaluation (heuristic + try_job_additions).
 }
 
 void SolutionState::update_route_bbox(const std::vector<Index>& route,

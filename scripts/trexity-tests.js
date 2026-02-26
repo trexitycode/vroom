@@ -1341,6 +1341,168 @@ const tests = {
     fs.rmSync(t, { recursive: true, force: true });
   },
 
+  // ---------------- pickup approach cost multiplier tests ----------------
+  async pickup_multiplier_splits_distant_pickups() {
+    const t = tmpDir();
+    // Two merchants with distant pickups and very low fixed cost.
+    // The high non-initial multiplier makes the inter-pickup leg
+    // prohibitively expensive in the heuristic, causing the solver
+    // to place each shipment on a separate vehicle.
+    const input = {
+      vehicles: [
+        { id: 1, start_index: 0, capacity: [1], costs: { fixed: 1 },
+          non_initial_pickup_cost_multiplier: 100 },
+        { id: 2, start_index: 0, capacity: [1], costs: { fixed: 1 },
+          non_initial_pickup_cost_multiplier: 100 }
+      ],
+      shipments: [
+        { amount: [1],
+          pickup: { id: 11, location_index: 1 },
+          delivery: { id: 12, location_index: 2 } },
+        { amount: [1],
+          pickup: { id: 21, location_index: 3 },
+          delivery: { id: 22, location_index: 4 } }
+      ],
+      matrices: { car: { durations: [
+        //  0    1    2    3    4
+        [  0, 100, 200, 100, 200],
+        [100,   0, 100, 500, 300],
+        [200, 100,   0, 300, 100],
+        [100, 500, 300,   0, 100],
+        [200, 300, 100, 100,   0]
+      ]}}
+    };
+    const f = writeJSON(t, 'pm_split.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    assertJsonEq(json, '.summary.routes', 2);
+
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pickup_multiplier_allows_colocated_pickups() {
+    const t = tmpDir();
+    // Two shipments with pickups at the SAME location. Even with high
+    // non_initial multiplier, penalty is (N-1)*0 = 0 for co-located pickups
+    // placed consecutively, so interleaving on 1 vehicle stays optimal.
+    const input = {
+      vehicles: [
+        { id: 1, start_index: 0, capacity: [2], costs: { fixed: 500 },
+          non_initial_pickup_cost_multiplier: 10 },
+        { id: 2, start_index: 0, capacity: [2], costs: { fixed: 500 },
+          non_initial_pickup_cost_multiplier: 10 }
+      ],
+      shipments: [
+        { amount: [1],
+          pickup: { id: 11, location_index: 1 },
+          delivery: { id: 12, location_index: 2 } },
+        { amount: [1],
+          pickup: { id: 21, location_index: 1 },
+          delivery: { id: 22, location_index: 3 } }
+      ],
+      matrices: { car: { durations: [
+        //  0    1    2    3
+        [  0, 100, 300, 300],
+        [100,   0, 200, 200],
+        [300, 200,   0, 100],
+        [300, 200, 100,   0]
+      ]}}
+    };
+    const f = writeJSON(t, 'pm_colocated.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.routes', 1);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pickup_multiplier_no_effect_on_jobs() {
+    const t = tmpDir();
+    // Jobs only (not shipments) — multiplier should have no effect since
+    // jobs are JOB_TYPE::SINGLE, not PICKUP.
+    const input = {
+      vehicles: [{ id: 1, start_index: 0, non_initial_pickup_cost_multiplier: 100 }],
+      jobs: [
+        { id: 1, location_index: 1 },
+        { id: 2, location_index: 2 }
+      ],
+      matrices: matrix3_200()
+    };
+    const f = writeJSON(t, 'pm_no_effect_jobs.json', input);
+    const { code, json } = runVroom(f);
+    assertExit(0, code);
+    assertJsonEq(json, '.summary.unassigned', 0);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pickup_multiplier_validation_rejects_zero() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 1, start_index: 0, non_initial_pickup_cost_multiplier: 0 }],
+      jobs: [{ id: 1, location_index: 1 }],
+      matrices: matrix2()
+    };
+    const f = writeJSON(t, 'pm_validation_zero.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pickup_multiplier_validation_rejects_negative() {
+    const t = tmpDir();
+    const input = {
+      vehicles: [{ id: 1, start_index: 0, initial_pickup_cost_multiplier: -1 }],
+      jobs: [{ id: 1, location_index: 1 }],
+      matrices: matrix2()
+    };
+    const f = writeJSON(t, 'pm_validation_negative.json', input);
+    const { code } = runVroom(f);
+    assertExit(2, code);
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
+  async pickup_multiplier_output_costs_unaffected() {
+    const t = tmpDir();
+    // With and without multiplier, the output cost/duration/distance should
+    // be identical for the same route structure. The penalty is optimization-only.
+    const makeInput = (mult) => ({
+      vehicles: [
+        { id: 1, start_index: 0, capacity: [1],
+          non_initial_pickup_cost_multiplier: mult }
+      ],
+      shipments: [
+        { amount: [1],
+          pickup: { id: 11, location_index: 1 },
+          delivery: { id: 12, location_index: 2 } }
+      ],
+      matrices: { car: { durations: [
+        [0, 100, 200],
+        [100, 0, 150],
+        [200, 150, 0]
+      ]}}
+    });
+
+    const f1 = writeJSON(t, 'pm_output_control.json', makeInput(1.0));
+    const r1 = runVroom(f1);
+    assertExit(0, r1.code);
+
+    const f2 = writeJSON(t, 'pm_output_mult.json', makeInput(10.0));
+    const r2 = runVroom(f2);
+    assertExit(0, r2.code);
+
+    // Same route structure, so output cost/duration/distance should match
+    const route1 = r1.json.routes[0];
+    const route2 = r2.json.routes[0];
+    if (route1.cost !== route2.cost) {
+      throw new Error(`Output cost changed with multiplier: ${route1.cost} vs ${route2.cost}`);
+    }
+    if (route1.duration !== route2.duration) {
+      throw new Error(`Output duration changed: ${route1.duration} vs ${route2.duration}`);
+    }
+
+    fs.rmSync(t, { recursive: true, force: true });
+  },
+
   async exclusive_tags_pinned_conflict_allowed_blocks_third() {
     const t = tmpDir();
     const input = {
@@ -1441,6 +1603,13 @@ async function main() {
     'first_leg_allows_later_insertion_after_near_seed',
     'first_leg_blocks_shipment_pickup',
     'first_leg_ignored_for_vehicles_with_steps',
+    // pickup approach cost multiplier
+    'pickup_multiplier_splits_distant_pickups',
+    'pickup_multiplier_allows_colocated_pickups',
+    'pickup_multiplier_no_effect_on_jobs',
+    'pickup_multiplier_validation_rejects_zero',
+    'pickup_multiplier_validation_rejects_negative',
+    'pickup_multiplier_output_costs_unaffected',
     // exclusive_tags
     'exclusive_tags_single_vehicle_conflict_unassigns_one',
     'exclusive_tags_two_vehicles_all_assigned',

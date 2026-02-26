@@ -9,7 +9,9 @@ All rights reserved (see LICENSE).
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <numeric>
+#include <optional>
 #include <sstream>
 
 #include "utils/helpers.h"
@@ -139,6 +141,39 @@ Eval route_eval_for_vehicle(const Input& input,
                             Index v_rank,
                             const std::vector<Index>& route) {
   return route_eval_for_vehicle(input, v_rank, route.begin(), route.end());
+}
+
+Cost pickup_approach_penalty(const Input& input,
+                             Index v_rank,
+                             const std::vector<Index>& route) {
+  const auto& v = input.vehicles[v_rank];
+  const double I = v.initial_pickup_cost_multiplier;
+  const double N = v.non_initial_pickup_cost_multiplier;
+  if (I == 1.0 && N == 1.0) {
+    return 0;
+  }
+
+  Cost penalty = 0;
+  bool first_pickup_seen = false;
+  std::optional<Index> prev_index;
+  if (v.has_start()) {
+    prev_index = v.start.value().index();
+  }
+
+  for (const auto jr : route) {
+    const auto& job = input.jobs[jr];
+    if (job.type == JOB_TYPE::PICKUP && prev_index.has_value()) {
+      const Cost edge_cost = v.cost(prev_index.value(), job.index());
+      if (!first_pickup_seen) {
+        penalty += static_cast<Cost>(std::round(edge_cost * (I - 1.0)));
+        first_pickup_seen = true;
+      } else {
+        penalty += static_cast<Cost>(std::round(edge_cost * (N - 1.0)));
+      }
+    }
+    prev_index = job.index();
+  }
+  return penalty;
 }
 
 #ifndef NDEBUG

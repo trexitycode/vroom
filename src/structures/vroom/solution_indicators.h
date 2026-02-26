@@ -38,6 +38,7 @@ struct SolutionIndicators {
       assigned += r.route.size();
 
       eval += utils::route_eval_for_vehicle(input, v_rank, r.route);
+      eval.cost += utils::pickup_approach_penalty(input, v_rank, r.route);
       ++v_rank;
 
       if (!r.empty()) {

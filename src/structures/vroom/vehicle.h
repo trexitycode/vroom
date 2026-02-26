@@ -63,6 +63,11 @@ struct Vehicle {
   const Distance max_distance;
   // Optional bound on the very first driving leg (start -> first job)
   const Distance max_first_leg_distance;
+  // Optimization-only cost multipliers for pickup-approach legs.
+  // The first pickup in a route uses initial_pickup_cost_multiplier;
+  // all subsequent pickups use non_initial_pickup_cost_multiplier.
+  const double initial_pickup_cost_multiplier;
+  const double non_initial_pickup_cost_multiplier;
   const bool has_break_max_load;
   std::vector<VehicleStep> steps;
   Index type;
@@ -88,6 +93,8 @@ struct Vehicle {
       std::optional<UserDistance>(),
     const std::optional<UserDistance>& max_first_leg_distance =
       std::optional<UserDistance>(),
+    double initial_pickup_cost_multiplier = 1.,
+    double non_initial_pickup_cost_multiplier = 1.,
     const std::vector<VehicleStep>& input_steps = std::vector<VehicleStep>(),
     std::string type_str = NO_TYPE);
 

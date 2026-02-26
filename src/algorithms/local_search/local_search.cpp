@@ -7,6 +7,7 @@ All rights reserved (see LICENSE).
 
 */
 
+#include <cmath>
 #include <numeric>
 
 #include "algorithms/local_search/insertion_search.h"
@@ -182,6 +183,83 @@ LocalSearch<Route,
 
       if (route_job_insertions[i][j].eval != NO_EVAL) {
         route_job_insertions[i][j].eval.cost += fixed_cost;
+
+        if (_input.jobs[j].type == JOB_TYPE::PICKUP) {
+          const auto& vehicle = _input.vehicles[v];
+          const double I = vehicle.initial_pickup_cost_multiplier;
+          const double N = vehicle.non_initial_pickup_cost_multiplier;
+          if (I != 1.0 || N != 1.0) {
+            const auto pickup_r = route_job_insertions[i][j].pickup_rank;
+
+            // Find the rank of the current first pickup in the route.
+            std::optional<std::size_t> first_pickup_rank;
+            for (std::size_t rr = 0; rr < _sol[v].route.size(); ++rr) {
+              if (_input.jobs[_sol[v].route[rr]].type == JOB_TYPE::PICKUP) {
+                first_pickup_rank = rr;
+                break;
+              }
+            }
+
+            // Edge cost from predecessor to the new pickup.
+            Index pred_index;
+            bool has_pred = false;
+            if (pickup_r > 0) {
+              pred_index = _input.jobs[_sol[v].route[pickup_r - 1]].index();
+              has_pred = true;
+            } else if (vehicle.has_start()) {
+              pred_index = vehicle.start.value().index();
+              has_pred = true;
+            }
+
+            if (has_pred) {
+              const Cost edge_cost =
+                vehicle.cost(pred_index, _input.jobs[j].index());
+
+              if (!first_pickup_rank.has_value()) {
+                // Route has no pickups yet: new pickup is initial.
+                route_job_insertions[i][j].eval.cost +=
+                  static_cast<Cost>(std::round(edge_cost * (I - 1.0)));
+              } else if (pickup_r <= first_pickup_rank.value()) {
+                // Inserting before or at the current first pickup:
+                // new pickup becomes initial, old first becomes non-initial.
+                route_job_insertions[i][j].eval.cost +=
+                  static_cast<Cost>(std::round(edge_cost * (I - 1.0)));
+
+                // Old first pickup transitions from I to N.
+                const auto old_first_rank = first_pickup_rank.value();
+                const auto old_first_job_rank = _sol[v].route[old_first_rank];
+                // After insertion, the predecessor of the old first pickup
+                // is the same as before (insertion is before it, so the edge
+                // from the step just before old_first doesn't change in the
+                // original route's index space — addition_cost already
+                // accounts for the rewired travel edges).
+                // The penalty delta is just the multiplier change on the
+                // existing edge to the old first pickup.
+                Index old_first_pred;
+                bool has_old_pred = false;
+                if (old_first_rank > 0) {
+                  old_first_pred =
+                    _input.jobs[_sol[v].route[old_first_rank - 1]].index();
+                  has_old_pred = true;
+                } else if (vehicle.has_start()) {
+                  old_first_pred = vehicle.start.value().index();
+                  has_old_pred = true;
+                }
+                if (has_old_pred) {
+                  const Cost old_first_edge =
+                    vehicle.cost(old_first_pred,
+                                 _input.jobs[old_first_job_rank].index());
+                  route_job_insertions[i][j].eval.cost +=
+                    static_cast<Cost>(std::round(old_first_edge * (N - I)));
+                }
+              } else {
+                // Inserting after the first pickup: non-initial.
+                route_job_insertions[i][j].eval.cost +=
+                  static_cast<Cost>(std::round(edge_cost * (N - 1.0)));
+              }
+            }
+          }
+        }
       }
     }
   }

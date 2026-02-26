@@ -599,6 +599,8 @@ inline Vehicle get_vehicle(const rapidjson::Value& json_vehicle,
                  get_value_for<UserDuration>(json_vehicle, "max_travel_time"),
                  get_value_for<UserDistance>(json_vehicle, "max_distance"),
                  get_value_for<UserDistance>(json_vehicle, "max_first_leg_distance"),
+                 get_double(json_vehicle, "initial_pickup_cost_multiplier"),
+                 get_double(json_vehicle, "non_initial_pickup_cost_multiplier"),
                  get_vehicle_steps(json_vehicle),
                  get_string(json_vehicle, "type"));
 }

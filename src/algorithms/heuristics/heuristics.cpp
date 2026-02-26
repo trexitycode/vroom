@@ -8,6 +8,7 @@ All rights reserved (see LICENSE).
 */
 
 #include <algorithm>
+#include <cmath>
 
 #include "algorithms/heuristics/heuristics.h"
 #include "structures/vroom/tw_route.h"
@@ -446,8 +447,68 @@ inline Eval fill_route(const Input& input,
               current_eval = p_add + d_adds[delivery_r];
             }
 
+            auto adjusted_eval = current_eval;
+            {
+              const double I = vehicle.initial_pickup_cost_multiplier;
+              const double N = vehicle.non_initial_pickup_cost_multiplier;
+              if (I != 1.0 || N != 1.0) {
+                std::optional<std::size_t> first_pickup_rank;
+                for (std::size_t rr = 0; rr < route.route.size(); ++rr) {
+                  if (input.jobs[route.route[rr]].type == JOB_TYPE::PICKUP) {
+                    first_pickup_rank = rr;
+                    break;
+                  }
+                }
+
+                Index pred_index;
+                bool has_pred = false;
+                if (pickup_r > 0) {
+                  pred_index = input.jobs[route.route[pickup_r - 1]].index();
+                  has_pred = true;
+                } else if (vehicle.has_start()) {
+                  pred_index = vehicle.start.value().index();
+                  has_pred = true;
+                }
+                if (has_pred) {
+                  const Cost edge_cost =
+                    vehicle.cost(pred_index, input.jobs[job_rank].index());
+
+                  if (!first_pickup_rank.has_value()) {
+                    adjusted_eval.cost +=
+                      static_cast<Cost>(std::round(edge_cost * (I - 1.0)));
+                  } else if (pickup_r <= first_pickup_rank.value()) {
+                    adjusted_eval.cost +=
+                      static_cast<Cost>(std::round(edge_cost * (I - 1.0)));
+
+                    const auto old_first_rank = first_pickup_rank.value();
+                    const auto old_first_jr = route.route[old_first_rank];
+                    Index old_first_pred;
+                    bool has_old_pred = false;
+                    if (old_first_rank > 0) {
+                      old_first_pred =
+                        input.jobs[route.route[old_first_rank - 1]].index();
+                      has_old_pred = true;
+                    } else if (vehicle.has_start()) {
+                      old_first_pred = vehicle.start.value().index();
+                      has_old_pred = true;
+                    }
+                    if (has_old_pred) {
+                      const Cost old_first_edge =
+                        vehicle.cost(old_first_pred,
+                                     input.jobs[old_first_jr].index());
+                      adjusted_eval.cost +=
+                        static_cast<Cost>(std::round(old_first_edge * (N - I)));
+                    }
+                  } else {
+                    adjusted_eval.cost +=
+                      static_cast<Cost>(std::round(edge_cost * (N - 1.0)));
+                  }
+                }
+              }
+            }
+
             const double current_cost =
-              current_eval.cost -
+              adjusted_eval.cost -
               lambda * static_cast<double>(regrets[job_rank]);
 
             if (current_cost < best_cost) {

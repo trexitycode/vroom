@@ -30,6 +30,8 @@ Vehicle::Vehicle(Id id,
                  const std::optional<UserDuration>& max_travel_time,
                  const std::optional<UserDistance>& max_distance,
                  const std::optional<UserDistance>& max_first_leg_distance,
+                 double initial_pickup_cost_multiplier,
+                 double non_initial_pickup_cost_multiplier,
                  const std::vector<VehicleStep>& input_steps,
                  std::string type_str)
   : id(id),
@@ -52,6 +54,8 @@ Vehicle::Vehicle(Id id,
     max_first_leg_distance(max_first_leg_distance.has_value()
                              ? max_first_leg_distance.value()
                              : DEFAULT_MAX_DISTANCE),
+    initial_pickup_cost_multiplier(initial_pickup_cost_multiplier),
+    non_initial_pickup_cost_multiplier(non_initial_pickup_cost_multiplier),
     has_break_max_load(std::ranges::any_of(breaks,
                                            [](const auto& b) {
                                              return b.max_load.has_value();
@@ -60,6 +64,15 @@ Vehicle::Vehicle(Id id,
   if (!static_cast<bool>(start) && !static_cast<bool>(end)) {
     throw InputException(
       std::format("No start or end specified for vehicle {}.", id));
+  }
+
+  if (initial_pickup_cost_multiplier <= 0) {
+    throw InputException(
+      std::format("Invalid initial_pickup_cost_multiplier for vehicle {}.", id));
+  }
+  if (non_initial_pickup_cost_multiplier <= 0) {
+    throw InputException(std::format(
+      "Invalid non_initial_pickup_cost_multiplier for vehicle {}.", id));
   }
 
   for (unsigned i = 0; i < breaks.size(); ++i) {

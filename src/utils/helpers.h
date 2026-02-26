@@ -800,6 +800,10 @@ Eval route_eval_for_vehicle(const Input& input,
                             Index vehicle_rank,
                             const std::vector<Index>& route);
 
+Cost pickup_approach_penalty(const Input& input,
+                             Index v_rank,
+                             const std::vector<Index>& route);
+
 void check_tws(const std::vector<TimeWindow>& tws,
                Id id,
                const std::string& type);

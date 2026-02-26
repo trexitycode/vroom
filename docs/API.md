@@ -177,6 +177,8 @@ A `vehicle` object has the following properties:
 | [`max_travel_time`] | an integer defining the maximum travel time for this vehicle |
 | [`max_distance`] | an integer defining the maximum distance for this vehicle |
 | [`max_first_leg_distance`] | an integer (meters) limiting the very first driving leg from `start` to the first task; applies only if the vehicle has a `start` and no pre-existing `steps` |
+| [`initial_pickup_cost_multiplier`] | a double > 0 (default `1.0`). Multiplier applied to the optimization cost of travel TO the **first** pickup step in this vehicle's route. Does not affect reported durations, distances, or time windows. |
+| [`non_initial_pickup_cost_multiplier`] | a double > 0 (default `1.0`). Multiplier applied to the optimization cost of travel TO all **subsequent** (2nd, 3rd, ...) pickup steps in this vehicle's route. Setting this to e.g. `10` makes distant inter-merchant travel expensive while co-located pickups remain cheap. Does not affect reported durations, distances, or time windows. |
 | [`steps`] | an array of `vehicle_step` objects describing a custom route for this vehicle |
 
 A `cost` object has the following properties:
