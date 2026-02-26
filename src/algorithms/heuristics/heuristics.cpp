@@ -448,6 +448,7 @@ inline Eval fill_route(const Input& input,
             }
 
             auto adjusted_eval = current_eval;
+            bool skip_due_to_penalty = false;
             {
               const double I = vehicle.initial_pickup_cost_multiplier;
               const double N = vehicle.non_initial_pickup_cost_multiplier;
@@ -503,8 +504,36 @@ inline Eval fill_route(const Input& input,
                     adjusted_eval.cost +=
                       static_cast<Cost>(std::round(edge_cost * (N - 1.0)));
                   }
+
+                  // Only penalize if this pickup is at a location not
+                  // already served by an existing pickup on the route.
+                  // Same-merchant shipments (same pickup location) are free
+                  // to share a route.
+                  if (first_pickup_rank.has_value()) {
+                    const auto new_pickup_loc = input.jobs[job_rank].index();
+                    bool same_loc_exists = false;
+                    for (const auto jr : route.route) {
+                      if (input.jobs[jr].type == JOB_TYPE::PICKUP &&
+                          input.jobs[jr].index() == new_pickup_loc) {
+                        same_loc_exists = true;
+                        break;
+                      }
+                    }
+                    if (!same_loc_exists) {
+                      const Cost penalty_portion =
+                        adjusted_eval.cost - current_eval.cost;
+                      if (penalty_portion > 0 &&
+                          penalty_portion > vehicle.fixed_cost()) {
+                        skip_due_to_penalty = true;
+                      }
+                    }
+                  }
                 }
               }
+            }
+
+            if (skip_due_to_penalty) {
+              break;
             }
 
             const double current_cost =

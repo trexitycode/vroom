@@ -69,34 +69,6 @@ void PDShift::compute_gain() {
     t_gain -= rs.eval;
     _best_t_p_rank = rs.pickup_rank;
     _best_t_d_rank = rs.delivery_rank;
-
-    const auto& t_v = _input.vehicles[t_vehicle];
-    if (t_v.initial_pickup_cost_multiplier != 1.0 ||
-        t_v.non_initial_pickup_cost_multiplier != 1.0) {
-      const std::vector<Index>& t_route_vec = t_route;
-      const Cost old_target_penalty =
-        utils::pickup_approach_penalty(_input, t_vehicle, t_route_vec);
-
-      std::vector<Index> proposed_target;
-      proposed_target.reserve(t_route.size() + 2);
-      for (Index r = 0; r < static_cast<Index>(_best_t_p_rank); ++r) {
-        proposed_target.push_back(t_route[r]);
-      }
-      proposed_target.push_back(s_route[_s_p_rank]);
-      for (Index r = _best_t_p_rank;
-           r < static_cast<Index>(_best_t_d_rank); ++r) {
-        proposed_target.push_back(t_route[r]);
-      }
-      proposed_target.push_back(s_route[_s_d_rank]);
-      for (Index r = _best_t_d_rank;
-           r < static_cast<Index>(t_route.size()); ++r) {
-        proposed_target.push_back(t_route[r]);
-      }
-      const Cost new_target_penalty =
-        utils::pickup_approach_penalty(_input, t_vehicle, proposed_target);
-      t_gain.cost -= (new_target_penalty - old_target_penalty);
-    }
-
     stored_gain = s_gain + t_gain;
   }
 
@@ -105,7 +77,61 @@ void PDShift::compute_gain() {
 
 bool PDShift::is_valid() {
   assert(gain_computed);
-  return _valid;
+  if (!_valid) {
+    return false;
+  }
+
+  // Reject moves where the pickup approach penalty makes the gain
+  // negative. This prevents the local search from merging routes
+  // that the heuristic intentionally split.
+  const auto& s_v = _input.vehicles[s_vehicle];
+  const auto& t_v = _input.vehicles[t_vehicle];
+  if (s_v.initial_pickup_cost_multiplier != 1.0 ||
+      s_v.non_initial_pickup_cost_multiplier != 1.0 ||
+      t_v.initial_pickup_cost_multiplier != 1.0 ||
+      t_v.non_initial_pickup_cost_multiplier != 1.0) {
+    const std::vector<Index>& s_route_vec = s_route;
+    const Cost old_source_penalty =
+      utils::pickup_approach_penalty(_input, s_vehicle, s_route_vec);
+    std::vector<Index> source_without_pd;
+    source_without_pd.reserve(s_route.size() - 2);
+    for (std::size_t i = 0; i < s_route.size(); ++i) {
+      if (i != _s_p_rank && i != _s_d_rank) {
+        source_without_pd.push_back(s_route[i]);
+      }
+    }
+    const Cost new_source_penalty =
+      utils::pickup_approach_penalty(_input, s_vehicle, source_without_pd);
+    const Cost source_savings = old_source_penalty - new_source_penalty;
+
+    const std::vector<Index>& t_route_vec = t_route;
+    const Cost old_target_penalty =
+      utils::pickup_approach_penalty(_input, t_vehicle, t_route_vec);
+    std::vector<Index> proposed_target;
+    proposed_target.reserve(t_route.size() + 2);
+    for (Index r = 0; r < static_cast<Index>(_best_t_p_rank); ++r) {
+      proposed_target.push_back(t_route[r]);
+    }
+    proposed_target.push_back(s_route[_s_p_rank]);
+    for (Index r = _best_t_p_rank;
+         r < static_cast<Index>(_best_t_d_rank); ++r) {
+      proposed_target.push_back(t_route[r]);
+    }
+    proposed_target.push_back(s_route[_s_d_rank]);
+    for (Index r = _best_t_d_rank;
+         r < static_cast<Index>(t_route.size()); ++r) {
+      proposed_target.push_back(t_route[r]);
+    }
+    const Cost new_target_penalty =
+      utils::pickup_approach_penalty(_input, t_vehicle, proposed_target);
+    const Cost target_increase = new_target_penalty - old_target_penalty;
+
+    if (stored_gain.cost + source_savings - target_increase < 0) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 void PDShift::apply() {

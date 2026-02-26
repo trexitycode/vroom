@@ -20,8 +20,8 @@ Run against example requests (matrix-only):
 Run with geometry (requires OSRM running for the profile):
 
 ```bash
-# if OSRM car is at http://127.0.0.1:5000
-./bin/vroom-macos -a car:127.0.0.1 -p car:5000 -g -t 4 -i ./request3.example.json | jq .
+# if OSRM car is at http://127.0.0.1:60050
+./bin/vroom-macos -a car:127.0.0.1 -p car:60050 -g -t 4 -i ./request3.example.json | jq .
 ```
 
 Notes:

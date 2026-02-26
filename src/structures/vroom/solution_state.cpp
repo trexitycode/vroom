@@ -477,21 +477,6 @@ void SolutionState::set_pd_gains(const std::vector<Index>& route, Index v) {
       pd_gains[v][pickup_rank] =
         node_gains[v][pickup_rank] + node_gains[v][delivery_rank];
     }
-
-    if (vehicle.initial_pickup_cost_multiplier != 1.0 ||
-        vehicle.non_initial_pickup_cost_multiplier != 1.0) {
-      const Cost old_penalty = pickup_approach_penalty(_input, v, route);
-      std::vector<Index> route_without_pd;
-      route_without_pd.reserve(route.size() - 2);
-      for (std::size_t i = 0; i < route.size(); ++i) {
-        if (i != pickup_rank && i != delivery_rank) {
-          route_without_pd.push_back(route[i]);
-        }
-      }
-      const Cost new_penalty =
-        pickup_approach_penalty(_input, v, route_without_pd);
-      pd_gains[v][pickup_rank].cost += old_penalty - new_penalty;
-    }
   }
 }
 
@@ -696,7 +681,10 @@ void SolutionState::update_route_eval(const std::vector<Index>& route,
     }
     route_evals[v].cost += sum;
   }
-  route_evals[v].cost += pickup_approach_penalty(_input, v, route);
+  // Pickup approach penalty is excluded from route_evals to prevent
+  // cycling in the inner local-search loop. It is applied in
+  // SolutionIndicators (outer-loop comparison), PDShift (gain
+  // adjustment), heuristic construction, and try_job_additions.
 }
 
 void SolutionState::update_route_bbox(const std::vector<Index>& route,

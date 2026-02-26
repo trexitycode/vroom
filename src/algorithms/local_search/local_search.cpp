@@ -1926,12 +1926,7 @@ void LocalSearch<Route,
                         [&](auto sum, auto c) {
                           return sum + _sol_state.route_evals[c];
                         });
-      // Pickup approach penalties affect only cost and may not be fully
-      // tracked by every operator, so verify travel components strictly.
-      assert(Eval::saturating_add(new_eval.duration, best_gain.duration) ==
-             previous_eval.duration);
-      assert(Eval::saturating_add(new_eval.distance, best_gain.distance) ==
-             previous_eval.distance);
+      assert(new_eval + best_gain == previous_eval);
 #endif
 
       auto modified_vehicles =
