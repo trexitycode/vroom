@@ -1344,39 +1344,64 @@ const tests = {
   // ---------------- pickup approach cost multiplier tests ----------------
   async pickup_multiplier_splits_distant_pickups() {
     const t = tmpDir();
-    // Two merchants with distant pickups and very low fixed cost.
-    // The high non-initial multiplier makes the inter-pickup leg
-    // prohibitively expensive in the heuristic, causing the solver
-    // to place each shipment on a separate vehicle.
-    const input = {
+    // 3 merchants with distant pickups and realistic fixed cost (500).
+    // Without multiplier: all interleaved on 1 vehicle (cheaper than 3
+    // fixed costs). With multiplier 10000: PDShift splits into 3 separate
+    // single-pickup routes because the non-initial penalty dwarfs the
+    // fixed cost savings.
+    // 7 locations: 0=start, 1/2=merchant A pickup/delivery,
+    //              3/4=merchant B, 5/6=merchant C
+    const matrix7 = { car: { durations: [
+      [  0, 100, 200, 100, 200, 100, 200],
+      [100,   0, 100, 400, 300, 500, 400],
+      [200, 100,   0, 300, 200, 400, 300],
+      [100, 400, 300,   0, 100, 400, 300],
+      [200, 300, 200, 100,   0, 300, 200],
+      [100, 500, 400, 400, 300,   0, 100],
+      [200, 400, 300, 300, 200, 100,   0]
+    ]}};
+
+    const makeInput = (mult) => ({
       vehicles: [
-        { id: 1, start_index: 0, capacity: [1], costs: { fixed: 1 },
-          non_initial_pickup_cost_multiplier: 100 },
-        { id: 2, start_index: 0, capacity: [1], costs: { fixed: 1 },
-          non_initial_pickup_cost_multiplier: 100 }
+        { id: 1, start_index: 0, capacity: [1], costs: { fixed: 500 },
+          non_initial_pickup_cost_multiplier: mult },
+        { id: 2, start_index: 0, capacity: [1], costs: { fixed: 500 },
+          non_initial_pickup_cost_multiplier: mult },
+        { id: 3, start_index: 0, capacity: [1], costs: { fixed: 500 },
+          non_initial_pickup_cost_multiplier: mult }
       ],
       shipments: [
-        { amount: [1],
-          pickup: { id: 11, location_index: 1 },
+        { amount: [1], pickup: { id: 11, location_index: 1 },
           delivery: { id: 12, location_index: 2 } },
-        { amount: [1],
-          pickup: { id: 21, location_index: 3 },
-          delivery: { id: 22, location_index: 4 } }
+        { amount: [1], pickup: { id: 21, location_index: 3 },
+          delivery: { id: 22, location_index: 4 } },
+        { amount: [1], pickup: { id: 31, location_index: 5 },
+          delivery: { id: 32, location_index: 6 } }
       ],
-      matrices: { car: { durations: [
-        //  0    1    2    3    4
-        [  0, 100, 200, 100, 200],
-        [100,   0, 100, 500, 300],
-        [200, 100,   0, 300, 100],
-        [100, 500, 300,   0, 100],
-        [200, 300, 100, 100,   0]
-      ]}}
-    };
-    const f = writeJSON(t, 'pm_split.json', input);
-    const { code, json } = runVroom(f);
-    assertExit(0, code);
-    assertJsonEq(json, '.summary.unassigned', 0);
-    assertJsonEq(json, '.summary.routes', 2);
+      matrices: matrix7
+    });
+
+    // Control: no multiplier -> interleaved on 1 vehicle
+    const f1 = writeJSON(t, 'pm_control.json', makeInput(1.0));
+    const r1 = runVroom(f1);
+    assertExit(0, r1.code);
+    assertJsonEq(r1.json, '.summary.unassigned', 0);
+    assertJsonEq(r1.json, '.summary.routes', 1);
+
+    // With high multiplier -> split into 3 single-pickup routes
+    const f2 = writeJSON(t, 'pm_split.json', makeInput(10000));
+    const r2 = runVroom(f2);
+    assertExit(0, r2.code);
+    assertJsonEq(r2.json, '.summary.unassigned', 0);
+    assertJsonEq(r2.json, '.summary.routes', 3);
+
+    // Each route should have exactly 1 pickup step.
+    for (const rt of r2.json.routes) {
+      const pickups = rt.steps.filter(s => s.type === 'pickup');
+      if (pickups.length !== 1) {
+        throw new Error(`Route V${rt.vehicle}: expected 1 pickup, got ${pickups.length}`);
+      }
+    }
 
     fs.rmSync(t, { recursive: true, force: true });
   },

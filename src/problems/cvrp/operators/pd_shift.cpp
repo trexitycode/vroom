@@ -10,6 +10,7 @@ All rights reserved (see LICENSE).
 #include "problems/cvrp/operators/pd_shift.h"
 
 #include "algorithms/local_search/insertion_search.h"
+#include "utils/helpers.h"
 
 namespace vroom::cvrp {
 
@@ -66,9 +67,37 @@ void PDShift::compute_gain() {
       rs.eval != NO_EVAL) {
     _valid = true;
     t_gain -= rs.eval;
-    stored_gain = s_gain + t_gain;
     _best_t_p_rank = rs.pickup_rank;
     _best_t_d_rank = rs.delivery_rank;
+
+    const auto& t_v = _input.vehicles[t_vehicle];
+    if (t_v.initial_pickup_cost_multiplier != 1.0 ||
+        t_v.non_initial_pickup_cost_multiplier != 1.0) {
+      const std::vector<Index>& t_route_vec = t_route;
+      const Cost old_target_penalty =
+        utils::pickup_approach_penalty(_input, t_vehicle, t_route_vec);
+
+      std::vector<Index> proposed_target;
+      proposed_target.reserve(t_route.size() + 2);
+      for (Index r = 0; r < static_cast<Index>(_best_t_p_rank); ++r) {
+        proposed_target.push_back(t_route[r]);
+      }
+      proposed_target.push_back(s_route[_s_p_rank]);
+      for (Index r = _best_t_p_rank;
+           r < static_cast<Index>(_best_t_d_rank); ++r) {
+        proposed_target.push_back(t_route[r]);
+      }
+      proposed_target.push_back(s_route[_s_d_rank]);
+      for (Index r = _best_t_d_rank;
+           r < static_cast<Index>(t_route.size()); ++r) {
+        proposed_target.push_back(t_route[r]);
+      }
+      const Cost new_target_penalty =
+        utils::pickup_approach_penalty(_input, t_vehicle, proposed_target);
+      t_gain.cost -= (new_target_penalty - old_target_penalty);
+    }
+
+    stored_gain = s_gain + t_gain;
   }
 
   gain_computed = true;
