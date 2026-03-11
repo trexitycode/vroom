@@ -18,5 +18,5 @@ See https://github.com/stass/lldb-mcp
 2. use [trexity-tests.js](./scripts/trexity-tests.js) as the test suite, all tests must pass.
 3. committing and pushing your changes as you go
 4. when changes are good to be used in prod use [trexity-publish.sh](./scripts/trexity-publish.sh)
-5. after new version has been published (printed from the command above), use in the trexity repo use `cd ./devbox.d/packages/vroom && ./update-vroom.sh trexity-1.15.0-<timestamp>`
+5. after new version has been published (printed from the command above), use in the trexity repo use `cd ./devbox.d/packages/vroom && ./update-vroom.sh <tag>`
 6. deploy the routing server
